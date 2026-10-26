@@ -136,6 +136,12 @@ class IndiAllSky_Exposure_Base(object):
         next_exposure, next_gain, exposure_delta, gain_delta = self.adjust_exposure_gain(current_exposure, current_gain, next_exposure)
 
 
+        # Enforce the final exposure ceiling after strategy-specific adjustment.
+        if next_exposure > self.exposure_max:
+            next_exposure = self.exposure_max
+            exposure_delta = next_exposure - current_exposure
+
+
         # Do not exceed the gain limits
         if next_gain > self.gain_max:
             next_gain = self.gain_max
