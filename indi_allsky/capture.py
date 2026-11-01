@@ -1581,7 +1581,8 @@ class CaptureWorker(Process):
         logger.info('CCD binning: %d (moonmode)', self._expUtils.BINNING_MOONMODE)
         logger.info('CCD binning: %d (SQM)', self._expUtils.BINNING_SQM)
         if qhy_c.enabled(self.config):
-            self.c_gate = qhy_c.FrameGate(self.config, self.c_feedback, self.c_shared, ccd_min_exp, ccd_max_exp)
+            self.c_gate = qhy_c.FrameGate(self.config, self.c_feedback, self.c_shared, ccd_min_exp, ccd_max_exp,
+                                            readout=lambda: qhy_c.readout_identity(self.indiclient.ccd_device))
             self.c_gate.set_mode(qhy_c.mode_name(self.night, self.moonmode))
             initial = qhy_c.clamp((ccd_exposure_default, gain_day, 1), self.c_gate.bounds())
             self._c_apply(initial)
