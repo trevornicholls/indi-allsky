@@ -37,6 +37,14 @@ if p.is_dir():
         raise SystemExit('Legacy backup must be root:root 0700')
     destination = backup / ('indi-allsky-' + str(time.time_ns()))
     os.rename(p, destination)
+    # Keep the recognised vendor policy present before dpkg's conffile check.
+    # Otherwise --force-confold interprets migration as an intentional deletion.
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o440)
+    with os.fdopen(fd, 'wb') as policy:
+        policy.write((destination / 'sudoers').read_bytes())
+        policy.flush()
+        os.fsync(policy.fileno())
+    subprocess.run(['/usr/sbin/visudo', '-cf', str(p)], check=True)
     print('Preserved known legacy sudoers directory:', destination)
 PY
     fi

@@ -79,15 +79,15 @@ class Lifecycle(unittest.TestCase):
                 def root_stat(path,*a,**kw):
                     st=real_stat(path,*a,**kw)
                     # Model the real root-owned 0440 legacy dir without root.
-                    return SimpleNamespace(st_uid=0,st_gid=0,st_mode=(st.st_mode if path != policy else 0o40440))
+                    return SimpleNamespace(st_uid=0,st_gid=0,st_mode=(st.st_mode if path != policy or not __import__('stat').S_ISDIR(st.st_mode) else 0o40440))
                 with patch.object(Path,'stat',root_stat),patch('subprocess.run') as visudo:
                     if unexpected:
                         with self.assertRaises(SystemExit): exec(code,{})
                         self.assertTrue((policy/'local-policy').exists()); visudo.assert_not_called()
                     else:
                         exec(code,{})
-                        self.assertFalse(policy.exists());self.assertEqual(len(list((base/'backup').glob('*/sudoers'))),1)
-                        visudo.assert_called_once()
+                        self.assertTrue(policy.is_file());self.assertEqual(policy.read_bytes(),next((base/'backup').glob('*/sudoers')).read_bytes());self.assertEqual(policy.stat().st_mode & 0o777,0o440)
+                        self.assertEqual(visudo.call_count,2)
 
     def test_venv_replacement_preserves_old_local_state(self):
         spec=importlib.util.spec_from_file_location('install_venv',ROOT/'misc/install_venv.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
