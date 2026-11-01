@@ -87,4 +87,46 @@ class Checks(unittest.TestCase):
   x=C.Exposure(CONFIG);c=command();job={'c_command':c,'c_native':RAW};x.prepare(job,[1,1]);x.compare_exposure(75,15,1);self.assertFalse(x.target_adu_found)
   x.prepare(job,[1,1]);x.compare_exposure(75,15,1);self.assertTrue(x.target_adu_found);self.assertEqual(x.reply['command'],c)
   x.prepare(job,[1,2]);x.compare_exposure(0,15,1);self.assertFalse(x.target_adu_found);self.assertEqual(x.reply['proposal'],(15,1,1))
+class ClippingRegression(unittest.TestCase):
+ def sample(self,p,e,adu,clip,epoch=1,mode='day',gain=1,kind='normal'):
+  return p.decide(command(e,gain,epoch,mode,kind),adu,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
+ def test_recorded_live_conflict(self):
+  p=C.Policy()
+  # Original live startup, followed by its first safe frame. A hard clipping
+  # reduction must establish a ceiling that the ADU loop cannot undo.
+  for e,a,clip in [(0.5,244.718,.986606),(.25,202.372,.445638),(.125,114.608,.066192)]:
+   self.sample(p,e,a,clip)
+  self.assertEqual(self.sample(p,.0625,57.9406,.0063855),(.0625,1,1))
+  # The observed bright/dark pairs must return to the last measured safe
+  # exposure, rather than halve independently then immediately ramp back up.
+  for e,a,clip in [(.085185,74.6737,.0166874),(.101481,78.0486,.0193),(.116135,78.5712,.0201)]:
+   self.assertEqual(self.sample(p,e,a,clip),(.0625,1,1))
+   for _ in range(3):
+    self.assertEqual(self.sample(p,.0625,57.9406,.0063855),(.0625,1,1))
+    self.assertIn('clipping-limited',p.status);self.assertFalse(p.stable)
+ def test_clip_release_requires_actual_change_and_hysteresis(self):
+  p=C.Policy();self.sample(p,.125,114.6,.066)
+  for _ in range(4):self.assertEqual(self.sample(p,.0625,58,.006),(.0625,1,1))
+  # Crossing the clear threshold alone is insufficient at unchanged ADU.
+  for _ in range(3):self.assertEqual(self.sample(p,.0625,58,.004),(.0625,1,1))
+  self.assertEqual(self.sample(p,.0625,49,.004),(.0625,1,1))
+  released=self.sample(p,.0625,49,.004);self.assertEqual(released,(.078125,1,1))
+  self.assertEqual(self.sample(p,.078125,60,.02),(.0625,1,1))
+  for _ in range(4):self.assertEqual(self.sample(p,.0625,49,.004),(.0625,1,1))
+  p=C.Policy();self.sample(p,.125,114.6,.066)
+  self.assertEqual(self.sample(p,.062499,58,.006),(.062499,1,1))
+ def test_clip_state_scoped_to_ordinary_gain_and_mode(self):
+  p=C.Policy();self.sample(p,.125,114.6,.066)
+  self.sample(p,.0625,58,.006)
+  self.sample(p,10,0,0,kind='sqm')
+  for _ in range(4):self.sample(p,.0625,58,.006)
+  self.assertEqual(p.clip_limit,.0625)
+  self.sample(p,.0625,40,0,epoch=2,mode='night')
+  self.assertIsNone(p.clip_limit)
+  self.assertGreater(self.sample(p,.0625,40,0,epoch=2,mode='night')[0],.0625)
+  self.sample(p,.125,100,.02,epoch=2,mode='night')
+  self.assertIsNotNone(p.clip_limit)
+  self.sample(p,.0625,45,0,epoch=2,mode='night',gain=3)
+  self.assertIsNone(p.clip_limit)
+
 if __name__=='__main__':unittest.main()
