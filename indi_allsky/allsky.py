@@ -16,6 +16,8 @@ from datetime import timezone
 #from pprint import pformat
 import signal
 import ctypes
+from .exposure import qhy5lii_c as qhy_c
+
 import logging
 
 import queue
@@ -246,6 +248,8 @@ class IndiAllSky(object):
         self.capture_worker = None
         self.capture_worker_idx = 0
 
+        self.c_feedback = Queue() if qhy_c.enabled(self.config) else None
+        self.c_shared = Array('i', [0, 0]) if qhy_c.enabled(self.config) else None
         self.image_q = Queue()
         self.image_error_q = Queue()
         self.image_worker = None
@@ -479,6 +483,7 @@ class IndiAllSky(object):
             self.sensors_user_av,
             self.night_av,
             self.astro_av,
+            c_feedback=self.c_feedback, c_shared=self.c_shared,
         )
         self.capture_worker.start()
 
@@ -532,6 +537,7 @@ class IndiAllSky(object):
             self.sensors_user_av,
             self.night_av,
             self.astro_av,
+            c_feedback=self.c_feedback, c_shared=self.c_shared,
         )
         self.image_worker.start()
 

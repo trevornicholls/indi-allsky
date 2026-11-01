@@ -11,6 +11,8 @@ import math
 import subprocess
 import dbus
 import signal
+from .exposure import qhy5lii_c as qhy_c
+
 import logging
 import traceback
 
@@ -219,6 +221,7 @@ class CaptureWorker(Process):
         sensors_user_av,
         night_av,
         astro_av,
+        c_feedback=None, c_shared=None,
     ):
 
         super(CaptureWorker, self).__init__()
@@ -241,6 +244,8 @@ class CaptureWorker(Process):
         self.sensors_user_av = sensors_user_av  # 0 ccd_temp
         self.night_av = night_av
         self.astro_av = astro_av
+        self.c_feedback, self.c_shared = c_feedback, c_shared
+        self.c_gate = None
 
         self._miscDb = miscDb(self.config)
         self._expUtils = IndiAllSkyExposureUtils(self.config, self.exposure_av, self.gain_av, self.binning_av)
@@ -391,12 +396,14 @@ class CaptureWorker(Process):
             logger.info('Exposure state: %s', exposure_state)
 
 
-            if self.indiclient.disconnected:
+            if self.c_gate and (self.indiclient.disconnected or self.indiclient.ccd_removed):
+                self.c_gate.fail('INDI connection/device removed')
+            if self.indiclient.disconnected and not self.c_gate:
                 logger.error('indiclient indicates indiserver disconnected, restarting capture process')
                 return
 
 
-            if self.indiclient.ccd_removed:
+            if self.indiclient.ccd_removed and not self.c_gate:
                 # INDI >= 2.1.7 supports hotplugging cameras
                 # If a [USB] camera is disconnected, it should automatically be detected when reconnected
                 # Older than 2.1.7 requires indiserver to be restarted
@@ -578,7 +585,7 @@ class CaptureWorker(Process):
                     next_check_exposure_state = time.time() + self.exposure_timeout
 
                     camera_last_ready_s = int(loop_start_time - camera_ready_time)
-                    if camera_last_ready_s > self.exposure_timeout:
+                    if camera_last_ready_s > self.exposure_timeout and not self.c_gate:
                         self._miscDb.addNotification(
                             NotificationCategory.CAMERA,
                             'last_ready',
@@ -613,6 +620,14 @@ class CaptureWorker(Process):
                         waiting_for_frame = False
                         waiting_for_sqm_frame = False
 
+
+                    if self.c_gate:
+                        self.c_gate.set_mode(qhy_c.mode_name(self.night, self.moonmode))
+                        if self.indiclient.disconnected or exposure_state == 'ALERT':
+                            self.c_gate.fail('INDI disconnected or exposure Alert')
+                        proposal = self.c_gate.poll(camera_ready)
+                        if proposal:
+                            self._c_apply(proposal)
 
                     if not camera_ready:
                         continue
@@ -668,6 +683,9 @@ class CaptureWorker(Process):
                         logger.warning('Goodbye')
                         return
 
+
+                    if self.c_gate and (self.c_gate.pending or self.c_gate.fault):
+                        continue
 
                     # reconfigure if needed
                     if self.reconfigure_camera:
@@ -826,6 +844,9 @@ class CaptureWorker(Process):
 
 
     def _initialize(self):
+        if qhy_c.enabled(self.config):
+            qhy_c.check(self.c_shared is not None and self.c_shared[0] == 0,
+                        'unresolved operation prevents capture-worker reconnect')
         camera_interface = getattr(camera_module, self.config.get('CAMERA_INTERFACE', 'indi'))
 
 
@@ -978,6 +999,16 @@ class CaptureWorker(Process):
 
 
         # configuration needs to be performed before getting CCD_INFO
+        if qhy_c.enabled(self.config):
+            qhy_c.check(self.c_shared is not None and self.c_shared[0] == 0,
+                        'QHY worker replacement has unresolved operation')
+            qhy_c.check(self.config['CAMERA_INTERFACE'] == 'indi', 'QHY C requires native INDI interface')
+            qhy_c.check(self.indiclient.ccd_device.getDriverExec() == 'indi_qhy_ccd', 'QHY C driver mismatch')
+            name = self.indiclient.ccd_device.getDeviceName()
+            qhy_c.check('QHY5LII-C' in name.upper().replace('QHY5L-II', 'QHY5LII'), 'QHY C model mismatch')
+            for presets in (self.config.get('INDI_CONFIG_DEFAULTS', {}), self.config.get('INDI_CONFIG_DAY', {})):
+                qhy_c.check(not (set(presets.get('PROPERTIES', {})) & {'CCD_GAIN','CCD_EXPOSURE','CCD_BINNING'}),
+                            'QHY C presets must not own gain/exposure/binning')
         self.indiclient.configureCcdDevice(self.indi_config)  # night config by default
 
 
@@ -987,6 +1018,14 @@ class CaptureWorker(Process):
 
         # get CCD information
         ccd_info = self.indiclient.getCcdInfo()
+        if qhy_c.enabled(self.config):
+            qhy_c.check(ccd_info.get('CCD_CFA', {}).get('CFA_TYPE', {}).get('text') == 'GRBG', 'QHY colour CFA mismatch')
+            gain_info = ccd_info['GAIN_INFO']
+            qhy_c.check(tuple(float(gain_info[k]) for k in ('min','max','step')) == (1.,22.,1.), 'QHY gain grid mismatch')
+            qhy_c.check(Path('/usr/local/lib/libqhyccd.so').resolve().name == 'libqhyccd.so.26.7.21', 'expected SDK 26.7.21 missing')
+            for mode in ('day','night','moon'):
+                qhy_c.limits(self.config, mode)
+            logger.info('QHY C identity verified: %s CFA GRBG gain 1/22/1 SDK 26.7.21', self.indiclient.ccd_device.getDeviceName())
 
 
         if self.config.get('CFA_PATTERN'):
@@ -1401,6 +1440,9 @@ class CaptureWorker(Process):
 
         config_exposure_def = math.ceil(float(self.config.get('CCD_EXPOSURE_DEF', 0.0)) * 1000000) / 1000000
 
+        if qhy_c.enabled(self.config) and not config_exposure_def:
+            config_exposure_def = 0.5  # never reseed this strategy from SQLite
+
         # set default exposure, gain
         if config_exposure_def:
             ccd_exposure_default = config_exposure_def
@@ -1478,6 +1520,10 @@ class CaptureWorker(Process):
                     ccd_binning_default = binning_day
 
 
+        if qhy_c.enabled(self.config):
+            ccd_gain_default, ccd_binning_default = gain_day, 1
+            ccd_exposure_default = min(ccd_exposure_default, 15.)
+
         # sanity check
         if ccd_exposure_default > maximum_exposure:
             ccd_exposure_default = maximum_exposure
@@ -1545,6 +1591,13 @@ class CaptureWorker(Process):
         logger.info('CCD binning: %d (night)', self._expUtils.BINNING_NIGHT)
         logger.info('CCD binning: %d (moonmode)', self._expUtils.BINNING_MOONMODE)
         logger.info('CCD binning: %d (SQM)', self._expUtils.BINNING_SQM)
+        if qhy_c.enabled(self.config):
+            self.c_gate = qhy_c.FrameGate(self.config, self.c_feedback, self.c_shared, ccd_min_exp, ccd_max_exp)
+            self.c_gate.set_mode(qhy_c.mode_name(self.night, self.moonmode))
+            initial = qhy_c.clamp((ccd_exposure_default, gain_day, 1), self.c_gate.bounds())
+            self._c_apply(initial)
+            self.c_gate.next = self.c_gate.ordinary = initial
+            self.indiclient.c_gate = self.c_gate
 
 
     def _sync_camera(self, camera, camera_metadata):
@@ -2045,6 +2098,9 @@ class CaptureWorker(Process):
 
         # update CCD config
         self.indiclient.configureCcdDevice(self.indi_config)
+        if self.c_gate:
+            self.c_gate.set_mode(qhy_c.mode_name(self.night, self.moonmode))
+            self._c_apply(qhy_c.clamp(self.c_gate.next, self.c_gate.bounds()))
 
 
         ### Update shared values
@@ -2281,10 +2337,31 @@ class CaptureWorker(Process):
         self.video_q.put({'task_id' : task.id})
 
 
+    def _c_apply(self, proposal):
+        exposure, gain, binning = proposal
+        self._expUtils.EXPOSURE_DELTA = exposure - self._expUtils.EXPOSURE_CURRENT
+        self._expUtils.EXPOSURE_NEXT = exposure
+        self._expUtils.GAIN_DELTA = gain - self._expUtils.GAIN_CURRENT
+        self._expUtils.GAIN_NEXT = gain
+        self._expUtils.BINNING_NEXT = binning
+
     def shoot(self, exposure, gain, binning, sync=True, timeout=None, sqm_exposure=False):
         # sqm used for an image taking at a specific exposure/gain for a controlled SQM measurement
         logger.info('Taking %0.6fs exposure (gain %0.3f / bin %d)', exposure, gain, binning)
 
+        if self.c_gate:
+            if sqm_exposure:
+                try:
+                    qhy_c.validate((exposure, gain, binning), self.c_gate.bounds())
+                except qhy_c.ControlError as e:
+                    logger.warning('QHY C skipped invalid SQM settings: %s', e)
+                    return
+            try:
+                self.c_gate.start(exposure, gain, binning, 'sqm' if sqm_exposure else 'normal')
+                self.indiclient.setCcdExposure(exposure, gain, binning, sync=sync, timeout=timeout, sqm_exposure=sqm_exposure)
+            except Exception as e:
+                self.c_gate.fail(e)
+            return
         self.indiclient.setCcdExposure(exposure, gain, binning, sync=sync, timeout=timeout, sqm_exposure=sqm_exposure)
 
 
