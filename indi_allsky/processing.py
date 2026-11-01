@@ -1611,13 +1611,13 @@ class ImageProcessor(object):
         logger.info('Fixed %d holes in %0.4f s', hole_count, holes_elapsed_s)
 
 
-    def calculate_8bit_adu(self):
+    def calculate_8bit_adu(self, preserve_precision=False):
         i_ref = self.getLatestImage()
 
-        return self._calculate_8bit_adu(i_ref)
+        return self._calculate_8bit_adu(i_ref, preserve_precision=preserve_precision)
 
 
-    def _calculate_8bit_adu(self, i_ref):
+    def _calculate_8bit_adu(self, i_ref, preserve_precision=False):
         if isinstance(self._adu_mask_dict[i_ref.binning], type(None)):
             # This only needs to be done once if a mask is not provided
             self._generateAduMask(self.image, i_ref.binning)
@@ -1648,7 +1648,7 @@ class ImageProcessor(object):
 
         if i_ref.image_bitpix == 8:
             # nothing to scale
-            adu_8 = int(adu)
+            adu_8 = float(adu) if preserve_precision else int(adu)
         elif i_ref.image_bitpix == 16:
             shift_factor = self.max_bit_depth - 8
             adu_8 = int(adu) >> shift_factor
