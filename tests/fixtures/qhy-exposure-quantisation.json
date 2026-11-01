@@ -1,0 +1,248 @@
+{
+  "provenance": {
+    "experiment": "qhy-exposure-floor-20261031T115124Z",
+    "properties_sha256": "e95c41956c22be381cfaa72d9b5b80b874312a2a27803eda6ef21df729cc5e71",
+    "boundary_frames_sha256": "c9ffc5bf7b3bb10c023621dd45887675d1b31f5d62a5d2846af5fe00ff1991a1",
+    "note": "Selected recorded property values and all 24 boundary-frame exposure/B-plane means; no camera identifiers, paths or native pixels."
+  },
+  "props": {
+    "SDK_VERSION": {
+      "values": {
+        "VERSION": "26.7.21"
+      }
+    },
+    "CCD_CAPTURE_FORMAT": {
+      "values": {
+        "INDI_RAW": "On"
+      }
+    },
+    "CCD_INFO": {
+      "values": {
+        "CCD_MAX_X": "1280",
+        "CCD_MAX_Y": "960",
+        "CCD_PIXEL_SIZE": "3.75",
+        "CCD_PIXEL_SIZE_X": "3.75",
+        "CCD_PIXEL_SIZE_Y": "3.75",
+        "CCD_BITSPERPIXEL": "8"
+      }
+    },
+    "USB_SPEED": {
+      "values": {
+        "SPEED": "0"
+      }
+    },
+    "USB_TRAFFIC": {
+      "values": {
+        "TRAFFIC": "30"
+      }
+    },
+    "CCD_FRAME": {
+      "values": {
+        "X": "0",
+        "Y": "0",
+        "WIDTH": "1280",
+        "HEIGHT": "960"
+      }
+    },
+    "CCD_BINNING": {
+      "values": {
+        "HOR_BIN": "1",
+        "VER_BIN": "1"
+      }
+    }
+  },
+  "boundary_frames": [
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 78.5263671875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 78.561767578125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 78.594970703125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00055,
+      "stats": {
+        "B": {
+          "mean": 153.68408203125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00055,
+      "stats": {
+        "B": {
+          "mean": 153.845703125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00055,
+      "stats": {
+        "B": {
+          "mean": 154.02978515625
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0006,
+      "stats": {
+        "B": {
+          "mean": 154.174560546875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0006,
+      "stats": {
+        "B": {
+          "mean": 154.25732421875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0006,
+      "stats": {
+        "B": {
+          "mean": 154.384521484375
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00075,
+      "stats": {
+        "B": {
+          "mean": 154.53369140625
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00075,
+      "stats": {
+        "B": {
+          "mean": 154.643310546875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00075,
+      "stats": {
+        "B": {
+          "mean": 154.69384765625
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0008,
+      "stats": {
+        "B": {
+          "mean": 228.4912109375
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0008,
+      "stats": {
+        "B": {
+          "mean": 228.3564453125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0008,
+      "stats": {
+        "B": {
+          "mean": 228.167236328125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00085,
+      "stats": {
+        "B": {
+          "mean": 227.688720703125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00085,
+      "stats": {
+        "B": {
+          "mean": 227.28125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.00085,
+      "stats": {
+        "B": {
+          "mean": 226.821044921875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0009,
+      "stats": {
+        "B": {
+          "mean": 225.786376953125
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0009,
+      "stats": {
+        "B": {
+          "mean": 225.039794921875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0009,
+      "stats": {
+        "B": {
+          "mean": 224.287841796875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 77.7119140625
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 77.340576171875
+        }
+      }
+    },
+    {
+      "exposure_requested": 0.0005,
+      "stats": {
+        "B": {
+          "mean": 76.98388671875
+        }
+      }
+    }
+  ]
+}

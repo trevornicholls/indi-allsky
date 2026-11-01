@@ -59,6 +59,53 @@ def clamp(settings, bounds):
     gain = max([v for v in codes if v <= g] or [codes[0]])
     return validate((round(max(bounds['lo'], min(bounds['hi'], e)), 6), gain, 1), bounds)
 
+# This is a binary-derived/readout-specific model, not a universal camera minimum.
+# SDK SetChipUSBTraffic: reg300c = 1650 + 50*traffic (full width).
+# SetChipExposeTime: RowTime = reg300c/(12 MHz * PLLratio=1), speed 0.
+# Only the measured RAW8/full-frame/speed0/traffic30 profile is enabled.
+SDK_QUANT_SHA = 'dbee1afda782c80f3a90d0c4a5a8de38430d592d56b97ce0052c95872248c078'
+SHORT_REGION = .001
+
+
+def exposure_quantum(readout):
+    expected = {'sdk': '26.7.21', 'sdk_sha256': SDK_QUANT_SHA,
+                'format': 'INDI_RAW', 'bits': 8., 'speed': 0., 'traffic': 30.,
+                'width': 1280., 'height': 960., 'x': 0., 'y': 0.,
+                'bin_x': 1., 'bin_y': 1.}
+    if not readout or any(readout.get(k) != v for k, v in expected.items()):
+        return None
+    return (1650. + 50. * readout['traffic']) / 12. / 1e6
+
+
+def exposure_rows(exposure, quantum):
+    return max(1, int(int(exposure * 1e6) / (quantum * 1e6)))
+
+
+@lru_cache(maxsize=4)
+def _sdk_digest(path, size, modified):
+    from pathlib import Path
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def readout_identity(device):
+    """Read cached INDI properties, never write/query SDK or request a frame."""
+    from pathlib import Path
+    def number(prop, element):
+        return next(v.getValue() for v in device.getNumber(prop) if v.getName() == element)
+    try:
+        sdk = Path('/usr/local/lib/libqhyccd.so').resolve()
+        stat = sdk.stat()
+        return {'sdk': next(v.getText() for v in device.getText('SDK_VERSION') if v.getName() == 'VERSION'),
+                'sdk_sha256': _sdk_digest(str(sdk), stat.st_size, stat.st_mtime_ns),
+                'format': next(v.getName() for v in device.getSwitch('CCD_CAPTURE_FORMAT') if int(v.getState()) == 1),
+                'bits': number('CCD_INFO', 'CCD_BITSPERPIXEL'),
+                'speed': number('USB_SPEED', 'SPEED'), 'traffic': number('USB_TRAFFIC', 'TRAFFIC'),
+                **{key: number('CCD_FRAME', name) for key, name in [('x','X'),('y','Y'),('width','WIDTH'),('height','HEIGHT')]},
+                'bin_x': number('CCD_BINNING', 'HOR_BIN'), 'bin_y': number('CCD_BINNING', 'VER_BIN')}
+    except (OSError, AttributeError, TypeError, ValueError, StopIteration):
+        return {'unverified': True}  # no invented mapping for missing properties
+
+
 class Policy:
     """Memory-only brightness policy; no hardware, database or worker imports."""
 
@@ -83,8 +130,161 @@ class Policy:
         self.clip_clear = 0
         self.clip_bad = self.clip_lower = None
         self.clip_retested = False
+        self.resolution_scope = None
+        self.resolution_samples = []
+        self.resolution_observed = {}
+        self.resolution_lock = None
+        self.resolution_changed = 0
+        self.resolution_telemetry = {}
 
     def decide(self, command, adu, native):
+        # The ordinary policy, including f445f2c recovery, still runs. This
+        # narrow final arbiter translates short requests into distinct rows.
+        if command['kind'] == 'sqm':
+            proposal = self._decide(command, adu, native)
+            self.resolution_samples = []
+            self.resolution_changed = 0
+            return proposal  # SQM settings must not replace ordinary scope
+        readout = command.get('readout', {})
+        b = command['bounds']
+        scope = (command['session'], command['epoch'], command['gain'],
+                 tuple(sorted(readout.items())), tuple(sorted((k, b[k]) for k in ('lo','hi','target','deviation'))))
+        previous_scope = self.resolution_scope
+        if previous_scope is not None and scope != previous_scope:
+            # Readout/limits changes invalidate physical clipping knowledge too.
+            self.clip_limit = self.clip_reference = self.clip_safe = None
+            self.clip_bad = self.clip_lower = None
+            self.clip_clear = 0
+            self.clip_retested = False
+        proposal = self._decide(command, adu, native)
+        if scope != self.resolution_scope:
+            self.resolution_scope = scope
+            self.resolution_samples = []
+            self.resolution_observed = {}
+            self.resolution_lock = None
+            self.resolution_changed = 0
+        quantum = exposure_quantum(readout)
+        self.resolution_telemetry = {'model': 'SDK-row-profile' if quantum else 'unmapped',
+                                     'row_seconds_estimate': quantum, 'rows': None, 'limited': False}
+        if (quantum is None or proposal is None or command['kind'] != 'normal'
+                or self.invalid or self.status in ('settling gain/SQM', 'qualifying post-gain feedback')):
+            self.resolution_samples = []
+            self.resolution_changed = 0
+            return proposal
+        if command['exposure'] > SHORT_REGION:
+            # Keep at most the neighbouring row at the region edge.
+            # Policy and proposals outside the short region remain unchanged.
+            edge = int(exposure_rows(SHORT_REGION, quantum)) + 1
+            if exposure_rows(command['exposure'], quantum) == edge:
+                self.resolution_observed[edge] = {'adu': adu, 'clip': native.get('clip_fraction', 0.), 'clipped': native.get('clipped', False)}
+            else:
+                self.resolution_observed = {}
+            self.resolution_samples = []
+            self.resolution_lock = None
+            return proposal
+        result = self._resolve_exposure(command, adu, native, proposal, quantum)
+        self.resolution_telemetry['next_rows'] = exposure_rows(result[0], quantum)
+        return result
+
+    def _resolve_exposure(self, command, adu, native, proposal, quantum):
+        b = command['bounds']
+        e, g = command['exposure'], command['gain']
+        row = int(exposure_rows(e, quantum))
+        self.resolution_telemetry.update(rows=row, effective_seconds_estimate=row*quantum)
+        # A gain decision remains the existing policy's responsibility.
+        if proposal[1] != g:
+            return proposal
+        samples = self.resolution_samples
+        if not samples or samples[-1][0] != row:
+            samples = []
+        samples = (samples + [(row, float(adu), float(native.get('clip_fraction', 0.)))])[-2:]
+        self.resolution_samples = samples
+        clipped = native.get('clipped', False)
+        value = {'adu': sum(v[1] for v in samples)/len(samples),
+                 'clip': max(v[2] for v in samples), 'clipped': clipped}
+        if clipped or len(samples) == 2:
+            self.resolution_observed[row] = value
+        # Bound memory to this row and its immediate neighbours.
+        self.resolution_observed = {r: v for r,v in self.resolution_observed.items() if abs(r-row) <= 1}
+        T, D = b['target'], b['deviation']
+        lo_row, hi_row = int(exposure_rows(b['lo'], quantum)), int(exposure_rows(min(b['hi'], SHORT_REGION), quantum))
+
+        def setting(number):
+            # Centre of a sensor-row interval avoids both SDK integer-us and
+            # driver float truncation at exact boundaries. Respect user bounds.
+            request = round((number + .5) * quantum, 6)
+            request = round(max(b['lo'], min(b['hi'], request)), 6)
+            return validate((request, g, 1), b)
+
+        def hold(reason, limited=False):
+            self.status = reason
+            self.resolution_telemetry['limited'] = limited
+            if limited:
+                self.stable = False
+            # Keep the existing clipping ceiling consistent with what will
+            # actually be commanded, not an ineffective fractional-row probe.
+            if self.clip_limit is not None:
+                self.clip_limit = e
+            return (e, g, 1)
+
+        if clipped:
+            self.resolution_lock = None
+            if row <= lo_row:
+                if g > b['floor']:
+                    return self.step(command, -1, adu)
+                return hold('exposure-resolution-limited: minimum permitted row clipped', True)
+            result = setting(row-1)
+            self.clip_limit = result[0]
+            self.stable = False
+            self.status = 'clipped: reduce one effective exposure row'
+            return result
+        lock = self.resolution_lock
+        if lock and lock['selected'] == row:
+            changed = (abs(value['adu']-lock['adu']) >= max(2., D/4)
+                       or abs(value['clip']-lock['clip']) >= .0025)
+            self.resolution_changed = self.resolution_changed+1 if changed else 0
+            if self.resolution_changed < 2:
+                return hold('exposure-resolution-limited: adjacent rows straddle target', True)
+            self.resolution_lock = None
+            self.resolution_changed = 0
+            self.resolution_observed = {row: value}  # discard stale other-row data
+        if len(samples) < 2:
+            return hold('qualifying effective exposure row')
+        observed = self.resolution_observed
+        for lower in (row-1, row):
+            low, high = observed.get(lower), observed.get(lower+1)
+            if (low and high and not low['clipped'] and low['adu'] < T-D
+                    and (high['clipped'] or high['adu'] > T+D)):
+                selected = lower if high['clipped'] or T-D-low['adu'] <= high['adu']-(T+D) else lower+1
+                ref = observed[selected]
+                self.resolution_lock = {'selected': selected, 'adu': ref['adu'], 'clip': ref['clip']}
+                self.resolution_changed = 0
+                if selected == row:
+                    return hold('exposure-resolution-limited: adjacent rows straddle target', True)
+                self.stable = False
+                self.status = 'exposure-resolution-limited: select nearer safe row'
+                self.resolution_telemetry['limited'] = True
+                return setting(selected)
+        direction = 1 if adu < T-D else -1 if adu > T+D else 0
+        if not direction:
+            return proposal if proposal[0] == e else hold('stable effective exposure row')
+        next_row = row + direction
+        if next_row < lo_row or (next_row > hi_row and b['hi'] <= SHORT_REGION):
+            return hold('exposure-resolution-limited: configured row boundary', True)
+        # At the top of the measured short region, return to the existing
+        # continuous policy. Until then an adaptation must change a row.
+        if next_row > hi_row and exposure_rows(proposal[0], quantum) != row:
+            return proposal
+        result = setting(next_row)
+        if exposure_rows(result[0], quantum) == row:
+            return hold('exposure-resolution-limited: configured row boundary', True)
+        self.stable = False
+        self.status = 'bounded effective exposure row probe'
+        if self.clip_limit is not None:
+            self.clip_limit = result[0]
+        return result
+
+    def _decide(self, command, adu, native):
         b = command['bounds']
         current = validate((command['exposure'], command['gain'], command['binning']), b)
         e, g, binning = current
@@ -336,11 +536,12 @@ def native_statistics(data, config):
 class FrameGate:
     """Capture-owned association/gate only. Image worker owns all adaptation."""
 
-    def __init__(self, config, feedback, shared, hardware_min=1e-06, hardware_max=15.0):
+    def __init__(self, config, feedback, shared, hardware_min=1e-06, hardware_max=15.0, readout=None):
         check(feedback is not None and shared is not None, 'missing frame coordination')
         check(shared[0] == 0, 'worker replaced with unresolved QHY frame/fault')
         self.config, self.feedback, self.shared = (config, feedback, shared)
         self.hardware_min, self.hardware_max = (hardware_min, hardware_max)
+        self.readout = readout
         self.session = uuid.uuid4().hex
         self.sequence = 0
         self.epoch = 0
@@ -379,6 +580,8 @@ class FrameGate:
             e, g, n = validate((exposure, gain, binning), b)
             self.sequence += 1
             command = {'session': self.session, 'sequence': self.sequence, 'epoch': self.epoch, 'mode': self.mode, 'kind': kind, 'exposure': e, 'gain': g, 'binning': n, 'bounds': b}
+            if self.readout:
+                command['readout'] = self.readout()
             self.exposure_submitted = False
             self.pending = command
             self.sent_time = time.monotonic()
@@ -405,6 +608,7 @@ class FrameGate:
         with self.lock:
             c = self.pending
             check(c is not None and self.exposure_submitted and (self.blob_time is None) and (not self.fault), 'unsolicited/duplicate QHY BLOB')
+            check(not self.readout or c.get('readout') == self.readout(), 'QHY readout changed during pending frame')
             h = hdulist[0].header
             # INDI emits EXPTIME through fits_update_key_dbl(..., 6): six
             # decimals in scientific notation, not six absolute decimal places.
@@ -515,8 +719,10 @@ class Exposure:
         self.current_adu_target = c['bounds']['target']
         self.target_adu_found = stable
         self.reply = {'command': c, 'ok': True, 'proposal': proposal, 'status': status, 'target': self.current_adu_target, 'stable': stable, 'clip_limit': self.policy.clip_limit, 'clip_bad': self.policy.clip_bad,
-                      'clip_safe': self.policy.clip_safe[0] if self.policy.clip_safe else None}
-        LOG.info('QHY C decision seq=%d ADU=%.3f status=%s target=%.3f stable=%s proposal=%s', c['sequence'], adu, status, self.current_adu_target, stable, proposal)
+                      'clip_safe': self.policy.clip_safe[0] if self.policy.clip_safe else None,
+                      'exposure_resolution': ({'model': 'not applied', 'reason': 'stale mode'}
+                                              if job.get('c_stale_mode') else self.policy.resolution_telemetry)}
+        LOG.info('QHY C decision seq=%d ADU=%.3f status=%s target=%.3f stable=%s proposal=%s resolution=%s', c['sequence'], adu, status, self.current_adu_target, stable, proposal, self.reply['exposure_resolution'])
         return (adu, adu if stable else 0.0)
 
     def sqm_complete(self):
