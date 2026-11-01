@@ -81,6 +81,8 @@ class Policy:
         self.invalid = 0
         self.clip_limit = self.clip_reference = self.clip_safe = None
         self.clip_clear = 0
+        self.clip_bad = self.clip_lower = None
+        self.clip_retested = False
 
     def decide(self, command, adu, native):
         b = command['bounds']
@@ -104,9 +106,12 @@ class Policy:
         if self.last_settings is not None and self.last_settings != current:
             self.history = []
             self.direction = self.qualified = self.stable_count = 0
+            self.clip_clear = 0
             if self.last_settings[1:] != current[1:]:
                 self.settle, self.after_gain = (1, True)
                 self.clip_limit = self.clip_reference = self.clip_safe = None
+                self.clip_bad = self.clip_lower = None
+                self.clip_retested = False
                 self.clip_clear = 0
         self.last_settings = current
         if not native.get('valid') or adu is None or (not isinstance(adu, (int, float))) or (not math.isfinite(adu)) or (not 0 <= adu <= 255):
@@ -144,44 +149,10 @@ class Policy:
                 self.bracket = {'lower': self.up_reference['lower'], 'upper': g, 'reference': None}
                 self.up_reference = None
             self.stable_count = 0
-            if e > b['lo']:
-                # Reuse the last measured safe setting rather than cut again
-                # independently of the ADU loop. If none is lower, halve once
-                # and retain that bound until new measurements justify release.
-                safe = self.clip_safe if self.clip_safe and self.clip_safe[0] < e else None
-                reduced = max(b['lo'], round(max(e * .5, safe[0]) if safe else e * .5, 6))
-                self.clip_limit = min(self.clip_limit or b['hi'], reduced)
-                self.clip_reference = safe[1] if safe and safe[0] == self.clip_limit else None
-                self.clip_clear = 0
-                self.status = 'clipped: constrain exposure'
-                return validate((self.clip_limit, g, 1), b)
-            self.clip_limit, self.clip_reference = (e, None)
-            if g > b['floor']:
-                return self.step(command, -1, adu)
-            self.status = 'overexposed limit'
-            return current
-        self.clip_safe = (e, adu)
-        if self.clip_limit is not None and abs(e - self.clip_limit) <= .0000011:
-            # Shared exposure storage can truncate a rounded request by 1us.
-            # Bind the ceiling/reference to the actual immutable command.
-            self.clip_limit = e
-            if self.clip_reference is None:
-                self.clip_reference = adu
-            # Hysteresis: same-gain, same-exposure dimming AND two frames below
-            # half the unchanged 1% clipping threshold. Time alone cannot release
-            # the ceiling and recreate the static-scene limit cycle.
-            clearing = (direction > 0 and native.get('clip_fraction', 0.) <= .005
-                        and adu <= self.clip_reference - max(2., D / 4))
-            self.clip_clear = self.clip_clear + 1 if clearing else 0
-            if self.clip_clear >= 2:
-                raised = min(b['hi'], max(round(e * 1.25, 6), round(e + .000001, 6)))
-                self.clip_limit = raised if raised < b['hi'] else None
-                self.clip_reference = None
-                self.clip_clear = 0
-            elif direction > 0:
-                self.qualified = self.stable_count = 0
-                self.status = 'clipping-limited: ADU target unattainable'
-                return current
+            return self._clip_reduce(command, current, adu)
+        recovery = self._clip_recover(command, current, adu, native, direction)
+        if recovery is not None:
+            return recovery
         if self.up_reference is not None and self.up_reference['gain'] == g:
             previous = self.up_reference
             if direction < 0:
@@ -224,6 +195,88 @@ class Policy:
         proposed = clamp((desired, g, 1), b)
         self.status = ('underexposed limit' if direction > 0 else 'overexposed limit') if proposed == current else 'bounded exposure correction'
         return proposed
+
+    def _clip_reduce(self, command, current, adu):
+        """Immediate protection; failed probes return to qualified safe data."""
+        e, g, _ = current
+        b = command['bounds']
+        self.clip_retested = self.clip_bad is not None and e >= self.clip_bad - 1e-9
+        self.clip_bad = min(self.clip_bad or e, e)
+        self.clip_reference = None
+        self.clip_clear = 0
+        if self.clip_safe and self.clip_safe[0] >= e:
+            self.clip_safe = self.clip_lower if self.clip_lower and self.clip_lower[0] < e else None
+            self.clip_lower = None  # retain at most one earlier qualified fallback
+        if e > b['lo']:
+            safe_e = self.clip_safe[0] if self.clip_safe else 0.
+            reduced = max(b['lo'], round(max(e * .5, safe_e), 6))
+            self.clip_limit = reduced
+            self.status = 'clipped: constrain exposure'
+            return validate((reduced, g, 1), b)
+        self.clip_limit = e
+        if g > b['floor']:
+            return self.step(command, -1, adu)
+        self.status = 'overexposed limit'
+        return current
+
+    def _clip_recover(self, command, current, adu, native, direction):
+        """Qualified bounded search; no ADU-decline prerequisite for recovery."""
+        e, g, _ = current
+        b = command['bounds']
+        self.clip_clear = min(2, self.clip_clear + 1)
+        if self.clip_clear >= 2:
+            if self.clip_safe and self.clip_safe[0] < e:
+                self.clip_lower = self.clip_safe
+            self.clip_safe = (e, adu)
+            if self.clip_bad is not None and e >= self.clip_bad - 1e-9:
+                # The formerly clipped setting is now demonstrably safe.
+                self.clip_limit = self.clip_bad = self.clip_reference = None
+                self.clip_retested = False
+                self.clip_clear = 0
+        if self.clip_limit is None or direction <= 0:
+            return None
+        self.qualified = self.stable_count = 0
+        if self.clip_clear < 2:
+            self.status = 'clipping recovery: qualifying safe feedback'
+            return current
+        if abs(e - self.clip_limit) <= .0000011:
+            self.clip_limit = e  # actual command after shared-storage rounding
+        step_max = max(e * 1.25, e + .000001)
+        if e < self.clip_limit - .0000011:
+            # A previously permitted probe may not have been applied yet.
+            probe = min(self.clip_limit, step_max)
+        else:
+            gap = self.clip_bad - e
+            closed = gap <= max(e * .05, .000001)
+            if self.clip_reference is None or abs(self.clip_reference['exposure'] - e) > .0000011:
+                self.clip_reference = {'exposure': e, 'adu': adu,
+                                       'clip': native.get('clip_fraction', 0.)}
+            ref = self.clip_reference
+            changed = (adu <= ref['adu'] - max(2., b['deviation'] / 4)
+                       or ref['clip'] - native.get('clip_fraction', 0.) >= .0025)
+            clear = native.get('clip_fraction', 0.) <= .005
+            if closed:
+                if self.clip_retested and not (clear and changed):
+                    self.status = 'clipping-limited: qualified safe boundary'
+                    return current
+                if not clear:
+                    self.status = 'clipping-limited: qualified safe boundary'
+                    return current
+                # Once per closed bracket, recheck a possibly transient/stale
+                # upper bound. A failed check stays closed until conditions change.
+                self.clip_retested = True
+                probe = min(self.clip_bad + .000001, step_max)
+            else:
+                probe = min((e + self.clip_bad) * .5, step_max)
+        proposal = clamp((min(b['hi'], probe), g, 1), b)
+        if proposal == current:
+            self.status = 'clipping-limited: exposure grid boundary'
+            return current
+        self.clip_limit = proposal[0]
+        self.clip_clear = 0
+        self.clip_reference = None
+        self.status = 'clipping recovery: bounded exposure probe'
+        return proposal
 
     def step(self, command, direction, adu):
         b = command['bounds']
@@ -461,7 +514,8 @@ class Exposure:
             stable = self.policy.stable
         self.current_adu_target = c['bounds']['target']
         self.target_adu_found = stable
-        self.reply = {'command': c, 'ok': True, 'proposal': proposal, 'status': status, 'target': self.current_adu_target, 'stable': stable, 'clip_limit': self.policy.clip_limit}
+        self.reply = {'command': c, 'ok': True, 'proposal': proposal, 'status': status, 'target': self.current_adu_target, 'stable': stable, 'clip_limit': self.policy.clip_limit, 'clip_bad': self.policy.clip_bad,
+                      'clip_safe': self.policy.clip_safe[0] if self.policy.clip_safe else None}
         LOG.info('QHY C decision seq=%d ADU=%.3f status=%s target=%.3f stable=%s proposal=%s', c['sequence'], adu, status, self.current_adu_target, stable, proposal)
         return (adu, adu if stable else 0.0)
 

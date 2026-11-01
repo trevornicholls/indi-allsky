@@ -92,42 +92,94 @@ class ClippingRegression(unittest.TestCase):
   return p.decide(command(e,gain,epoch,mode,kind),adu,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
  def test_recorded_live_conflict(self):
   p=C.Policy()
-  # Original live startup, followed by its first safe frame. A hard clipping
-  # reduction must establish a ceiling that the ADU loop cannot undo.
   for e,a,clip in [(0.5,244.718,.986606),(.25,202.372,.445638),(.125,114.608,.066192)]:
    self.sample(p,e,a,clip)
   self.assertEqual(self.sample(p,.0625,57.9406,.0063855),(.0625,1,1))
-  # The observed bright/dark pairs must return to the last measured safe
-  # exposure, rather than halve independently then immediately ramp back up.
-  for e,a,clip in [(.085185,74.6737,.0166874),(.101481,78.0486,.0193),(.116135,78.5712,.0201)]:
-   self.assertEqual(self.sample(p,e,a,clip),(.0625,1,1))
-   for _ in range(3):
-    self.assertEqual(self.sample(p,.0625,57.9406,.0063855),(.0625,1,1))
-    self.assertIn('clipping-limited',p.status);self.assertFalse(p.stable)
- def test_clip_release_requires_actual_change_and_hysteresis(self):
+  # Recovery is qualified/bounded, not the old immediate ADU ramp to .085185.
+  probe=self.sample(p,.0625,57.9406,.0063855)[0]
+  self.assertGreater(probe,.0625);self.assertLessEqual(probe,.0625*1.25)
+  self.assertLess(probe,.085185)
+ def test_clip_recovery_qualified_without_further_dimming(self):
   p=C.Policy();self.sample(p,.125,114.6,.066)
-  for _ in range(4):self.assertEqual(self.sample(p,.0625,58,.006),(.0625,1,1))
-  # Crossing the clear threshold alone is insufficient at unchanged ADU.
-  for _ in range(3):self.assertEqual(self.sample(p,.0625,58,.004),(.0625,1,1))
-  self.assertEqual(self.sample(p,.0625,49,.004),(.0625,1,1))
-  released=self.sample(p,.0625,49,.004);self.assertEqual(released,(.078125,1,1))
-  self.assertEqual(self.sample(p,.078125,60,.02),(.0625,1,1))
-  for _ in range(4):self.assertEqual(self.sample(p,.0625,49,.004),(.0625,1,1))
+  self.assertEqual(self.sample(p,.0625,58,.006),(.0625,1,1))
+  probe=self.sample(p,.0625,58,.006)[0];self.assertEqual(probe,.078125)
+  # A failed probe goes back to qualified safe data; next search is smaller.
+  self.assertEqual(self.sample(p,probe,60,.02),(.0625,1,1))
+  self.sample(p,.0625,58,.006)
+  next_probe=self.sample(p,.0625,58,.006)[0]
+  self.assertGreater(next_probe,.0625);self.assertLess(next_probe,probe)
   p=C.Policy();self.sample(p,.125,114.6,.066)
   self.assertEqual(self.sample(p,.062499,58,.006),(.062499,1,1))
+  self.assertGreater(self.sample(p,.062499,58,.006)[0],.062499)
  def test_clip_state_scoped_to_ordinary_gain_and_mode(self):
-  p=C.Policy();self.sample(p,.125,114.6,.066)
-  self.sample(p,.0625,58,.006)
+  p=C.Policy();self.sample(p,.125,114.6,.066);self.sample(p,.0625,58,.006)
+  before=(p.clip_limit,p.clip_bad)
   self.sample(p,10,0,0,kind='sqm')
-  for _ in range(4):self.sample(p,.0625,58,.006)
-  self.assertEqual(p.clip_limit,.0625)
+  self.assertEqual((p.clip_limit,p.clip_bad),before)
+  for _ in range(3):self.assertEqual(self.sample(p,.0625,58,.006),(.0625,1,1))
   self.sample(p,.0625,40,0,epoch=2,mode='night')
-  self.assertIsNone(p.clip_limit)
+  self.assertIsNone(p.clip_bad)
   self.assertGreater(self.sample(p,.0625,40,0,epoch=2,mode='night')[0],.0625)
   self.sample(p,.125,100,.02,epoch=2,mode='night')
-  self.assertIsNotNone(p.clip_limit)
+  self.assertIsNotNone(p.clip_bad)
   self.sample(p,.0625,45,0,epoch=2,mode='night',gain=3)
-  self.assertIsNone(p.clip_limit)
+  self.assertIsNone(p.clip_limit);self.assertIsNone(p.clip_bad)
+
+class ClippingRecoveryRegression(unittest.TestCase):
+ """Small closed-loop policy checks; response functions are explicit fakes."""
+ def run_frames(self,p,e,response,count,mode='day',gain=1):
+  out=[]
+  for _ in range(count):
+   a,clip=response(e)
+   result=p.decide(command(e,gain,mode=mode),a,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
+   out.append((e,a,clip,result[0],p.status));e=result[0]
+   self.assertLessEqual(e,15);self.assertGreaterEqual(e,.000001)
+   self.assertEqual(result[1:],(gain,1))
+   if p.status == 'clipping recovery: bounded exposure probe':
+    actual=out[-1][0]
+    self.assertLessEqual(result[0],max(actual*1.25,actual+.000001)+.00000051)
+  return e,out
+ def test_steady_dark_recovers_after_recorded_flash(self):
+  p=C.Policy()
+  # Exact isolated event and first post-event safe values from the run.
+  e=p.decide(command(9.375,14),241.982024,dict(RAW,clipped=True,clip_fraction=.986577))[0]
+  self.assertEqual(e,4.6875)
+  # Local response model uses observed 4.6875s/26.707 and pre-flash
+  # 9.375s/52.553 values. It is not a counterfactual camera measurement.
+  response=lambda e:(26.707+(e-4.6875)*(52.553-26.707)/4.6875,0.00004)
+  e,out=self.run_frames(p,e,response,24,mode='night',gain=14)
+  self.assertGreater(e,9.375)
+  self.assertTrue(p.stable)
+  self.assertTrue(all(x[3]>=x[0] for x in out))
+ def test_static_boundary_closes_without_repeated_halving(self):
+  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  response=lambda e:(800*e,0.02 if e>.075 else 0.001)
+  e,out=self.run_frames(p,e,response,100)
+  self.assertLessEqual(e,.075);self.assertGreater(e,.07)
+  self.assertEqual(len(set(x[0] for x in out[-40:])),1)
+  self.assertTrue(all(x[3]>.5*x[0] for x in out))
+  self.assertIn('clipping-limited',p.status)
+  self.assertFalse(p.stable)
+ def test_small_clipping_spike_uses_previous_safe_setting(self):
+  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  response=lambda e:(800*e,.02 if e>.075 else .001)
+  e,_=self.run_frames(p,e,response,50)
+  old=e
+  proposal=p.decide(command(e,mode='day'),800*e,dict(RAW,clipped=True,clip_fraction=.0102))
+  self.assertGreater(proposal[0],old*.8)
+  e,out=self.run_frames(p,proposal[0],response,60)
+  self.assertGreater(e,.07);self.assertLessEqual(e,.075)
+  self.assertEqual(len(set(x[0] for x in out[-20:])),1)
+ def test_changing_sky_requalifies_boundary(self):
+  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  e,_=self.run_frames(p,e,lambda e:(800*e,.02 if e>.075 else .006),40)
+  old=e
+  e,out=self.run_frames(p,e,lambda e:(500*e,.02 if e>.12 else .001),60)
+  self.assertGreater(e,old*1.4);self.assertLessEqual(e,.12)
+  self.assertEqual(len(set(x[0] for x in out[-20:])),1)
+  e,out=self.run_frames(p,e,lambda e:(1500*e,.02 if e>.04 else .001),60)
+  self.assertLessEqual(e,.04);self.assertGreater(e,.035)
+  self.assertEqual(len(set(x[0] for x in out[-20:])),1)
 
 class FitsRepresentationRegression(unittest.TestCase):
  def gate(self,e):
