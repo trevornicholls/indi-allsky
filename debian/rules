@@ -60,9 +60,14 @@ override_dh_installsystemd:
 	dh_installsystemd --name=indi-allsky --no-enable --no-start
 	dh_installsystemd --name=indiserver --no-enable --no-start
 
+# dh_install destinations are directories; install this payload as a file.
+override_dh_install:
+	dh_install
+	install -D -m 0440 debian/conf/sudoers debian/indi-allsky/etc/sudoers.d/indi-allsky
+
 override_dh_fixperms:
 	dh_fixperms
-	chmod 440 debian/indi-allsky/etc/sudoers.d/indi-allsky 2>/dev/null || true
+	chmod 440 debian/indi-allsky/etc/sudoers.d/indi-allsky
 
 override_dh_auto_clean:
 	rm -rf debian/venv debian/bundle debian/wheels

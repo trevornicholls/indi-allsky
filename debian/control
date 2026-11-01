@@ -10,6 +10,13 @@ Build-Depends: debhelper-compat (= 13),
  python3-dev,
  python3-pip,
  python3-wheel,
+ pkgconf,
+ libdbus-1-dev,
+ libglib2.0-dev,
+ libsystemd-dev,
+ libindi-dev,
+ cmake,
+ swig,
  zstd,
  git
 Standards-Version: 4.6.2
