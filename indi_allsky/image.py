@@ -12,6 +12,8 @@ import shutil
 import psutil
 import subprocess
 import signal
+from .exposure import qhy5lii_c as qhy_c
+
 import logging
 import traceback
 import uuid
@@ -85,6 +87,7 @@ class ImageWorker(Process):
         sensors_user_av,
         night_av,
         astro_av,
+        c_feedback=None, c_shared=None,
     ):
         super(ImageWorker, self).__init__()
 
@@ -105,6 +108,8 @@ class ImageWorker(Process):
         self.sensors_user_av = sensors_user_av
         self.night_av = night_av
         self.astro_av = astro_av
+        self.c_feedback, self.c_shared = c_feedback, c_shared
+        self.c_gate = None
 
         self.filename_t = 'ccd{0:d}_{1:s}.{2:s}'
 
@@ -265,7 +270,20 @@ class ImageWorker(Process):
 
             # new context for every task, reduces the effects of caching
             with app.app_context():
-                self.processImage(i_dict)
+                if not qhy_c.enabled(self.config):
+                    self.processImage(i_dict)
+                else:
+                    # ACK only after the complete processing/save path succeeds.
+                    self.exposure_o.prepare(i_dict, self.c_shared)
+                    try:
+                        self.processImage(i_dict)
+                        if self.exposure_o.reply is None:
+                            raise qhy_c.ControlError('processing returned without controller completion')
+                        self.c_feedback.put(self.exposure_o.reply)
+                    except Exception as e:
+                        logger.exception('QHY C processing fault')
+                        self.c_feedback.put({'command': i_dict['c_command'], 'ok': False, 'error': str(e)})
+
 
 
     def processImage(self, i_dict):
@@ -578,7 +596,7 @@ class ImageWorker(Process):
 
 
         # Calculate ADU before stretch
-        adu = self.image_processor.calculate_8bit_adu()
+        adu = self.image_processor.calculate_8bit_adu(preserve_precision=qhy_c.enabled(self.config))
         # adu value may be updated below
 
 
@@ -913,6 +931,9 @@ class ImageWorker(Process):
                     image_add_data['aircraft'].append(aircraft)
 
 
+            if qhy_c.enabled(self.config):
+                image_add_data['qhy_controller'] = dict(self.exposure_o.reply)
+                image_add_data['qhy_native'] = i_dict['c_native']
             image_metadata['data'] = image_add_data
 
 
@@ -3086,6 +3107,8 @@ class ImageWorker(Process):
     ):
         """Process an SQM-only capture through the same camera safety gate."""
         logger.warning('Processing SQM exposure')
+        if qhy_c.enabled(self.config) and self.image_processor._detection_mask_dict is None:
+            self.image_processor.post_init()
 
         try:
             i_ref = self.image_processor._add(
@@ -3126,4 +3149,6 @@ class ImageWorker(Process):
         with self.sensors_user_av.get_lock():
             self.sensors_user_av[constants.SENSOR_USER_CAMERA_SQM_MAG] = float(mag_sqm)
             self.sensors_user_av[constants.SENSOR_USER_CAMERA_SQM_ADU] = float(raw_adu)
+        if qhy_c.enabled(self.config):
+            self.exposure_o.sqm_complete()
 

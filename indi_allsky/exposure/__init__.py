@@ -13,3 +13,5 @@ __all__ = (
     'exposure_autogain_exp_prio_iso',
     'exposure_autogain_exp_prio_iso_1_100',
 )
+
+from .qhy5lii_c import Exposure as exposure_qhy5lii_c

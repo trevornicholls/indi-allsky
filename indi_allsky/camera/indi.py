@@ -1,4 +1,5 @@
 import time
+from threading import Event
 #import math
 import io
 import tempfile
@@ -6,6 +7,8 @@ import ctypes
 from datetime import datetime
 from dateutil import parser
 from pathlib import Path
+from ..exposure import qhy5lii_c as qhy_c
+
 import logging
 from pprint import pformat  # noqa: F401
 
@@ -104,6 +107,9 @@ class IndiClient(PyIndi.BaseClient):
         super(IndiClient, self).__init__()
 
         self.config = config
+        self.c_gate = None
+        self.c_gain_event = Event()
+        self.c_gain_ack = None
         self.image_q = image_q
 
         self.position_av = position_av
@@ -335,6 +341,7 @@ class IndiClient(PyIndi.BaseClient):
 
             self.processBlob(p_blob[0])
         elif p.getType() == PyIndi.INDI_NUMBER:
+            self._c_number_update(PyIndi.PropertyNumber(p))
             #p_number = PyIndi.PropertyNumber(p)
             #logger.info("new Number %s for %s", p_number.getName(), p_number.getDeviceName())
             pass
@@ -365,6 +372,7 @@ class IndiClient(PyIndi.BaseClient):
         pass
 
     def newNumber(self, nvp):
+        self._c_number_update(nvp)
         # legacy INDI 1.x.x code path
         #logger.info("new Number %s for %s", nvp.name, nvp.device)
         pass
@@ -379,6 +387,14 @@ class IndiClient(PyIndi.BaseClient):
         #logger.info("new Light %s for %s", lvp.name, lvp.device)
         pass
 
+
+    def _c_number_update(self, prop):
+        if not qhy_c.enabled(self.config) or self.ccd_device is None:
+            return
+        if prop.getName() == 'CCD_GAIN' and prop.getDeviceName() == self.ccd_device.getDeviceName():
+            if prop.getState() in (PyIndi.IPS_OK, PyIndi.IPS_IDLE, PyIndi.IPS_ALERT):
+                self.c_gain_ack = (prop.getState(), next(v.getValue() for v in prop if v.getName() == 'GAIN'))
+                self.c_gain_event.set()
 
     def processBlob(self, blob):
         from astropy.io import fits
@@ -421,6 +437,16 @@ class IndiClient(PyIndi.BaseClient):
             'filename_t'  : self._filename_t,
         }
 
+        if self.c_gate:
+            try:
+                command, raw = self.c_gate.frame(hdulist)
+                jobdata.update(c_command=command, c_native=raw,
+                               exposure=command['exposure'], gain=command['gain'],
+                               binning=command['binning'], sqm_exposure=command['kind'] == 'sqm')
+            except Exception as e:
+                self.c_gate.fail(e)
+                logger.error('QHY diagnostic FITS retained at %s', f_tmpfile_p)
+                return
         self.sqm_exposure = False  # reset
 
 
@@ -1074,6 +1100,11 @@ class IndiClient(PyIndi.BaseClient):
 
         if self.gain != gain:
             self.setCcdGain(gain)
+        if self.c_gate:
+            ctl = self.get_control(self.ccd_device, 'CCD_GAIN', 'number')
+            qhy_c.check(ctl.getState() in (PyIndi.IPS_OK, PyIndi.IPS_IDLE)
+                        and next(v.getValue() for v in ctl if v.getName() == 'GAIN') == gain,
+                        'gain not terminal or acknowledgement mismatch')
 
         if self.binning != binning:
             self.setCcdBinning(binning)
@@ -1650,7 +1681,15 @@ class IndiClient(PyIndi.BaseClient):
 
 
     def set_number(self, device, name, values, sync=True, timeout=None):
-        #logger.info('Name: %s, values: %s', name, str(values))
+        # Final guard, including startup and auxiliary writes. Legacy modes unchanged.
+        if qhy_c.enabled(self.config):
+            if name == 'CCD_GAIN':
+                gain = qhy_c.integer(values['GAIN'])
+                qhy_c.check(1 <= gain <= 22, 'QHY gain outside advertised integer grid')
+            if name == 'CCD_EXPOSURE':
+                qhy_c.check(self.c_gate is not None, 'exposure before QHY gate initialization')
+            if self.c_gate:
+                self.c_gate.property(name, values)
         c = self.get_control(device, name, 'number')
 
         if c.getPermission() == PyIndi.IP_RO:
@@ -1661,7 +1700,16 @@ class IndiClient(PyIndi.BaseClient):
             logger.info('Setting %s = %s', c[index].getLabel(), str(values[control_name]))
             c[index].setValue(values[control_name])
 
+        gain_wait = qhy_c.enabled(self.config) and name == 'CCD_GAIN'
+        if gain_wait:
+            self.c_gain_event.clear()
+            self.c_gain_ack = None
         self.sendNewNumber(c)
+        if gain_wait:
+            qhy_c.check(self.c_gain_event.wait(60), 'gain acknowledgement timeout')
+            qhy_c.check(self.c_gain_ack[0] in (PyIndi.IPS_OK, PyIndi.IPS_IDLE)
+                        and self.c_gain_ack[1] == values['GAIN'], 'gain acknowledgement failed/mismatched')
+            logger.info('QHY C gain acknowledgement: %s', self.c_gain_ack)
 
         if sync:
             self.__wait_for_ctl_statuses(c, timeout=timeout)
