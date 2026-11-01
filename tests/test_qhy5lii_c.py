@@ -129,4 +129,29 @@ class ClippingRegression(unittest.TestCase):
   self.sample(p,.0625,45,0,epoch=2,mode='night',gain=3)
   self.assertIsNone(p.clip_limit)
 
+class FitsRepresentationRegression(unittest.TestCase):
+ def gate(self,e):
+  g=C.FrameGate(CONFIG,Queue(),[0,0]);g.set_mode('night');c=g.start(e,1,1,'normal');g.property('CCD_EXPOSURE',{'CCD_EXPOSURE_VALUE':e});return g,c
+ def test_preserved_native_header(self):
+  path=Path(__file__).parent/'fixtures/qhy-failed-feedback-header.txt'
+  self.assertTrue(path.is_file())
+  g,c=self.gate(10.002973)
+  # Recreate the original request boundary with selected original header cards.
+  # Pixels are deterministic synthetic data; original native evidence stays external.
+  g.sent_wall=datetime(2026,10,30,17,17,14,tzinfo=timezone.utc).timestamp()
+  with frame(c) as h:
+   h[0].header.update(fits.Header.fromtextfile(path))
+   self.assertEqual(h[0].header['EXPTIME'],10.002970)
+   cmd,raw=g.frame(h)
+  self.assertEqual(cmd['exposure'],10.002973);self.assertTrue(raw['valid'])
+ def test_scientific_header_precision_and_strict_rejections(self):
+  for e in (.000123,.123456,1.234567,9.999999,10.002973,14.999999,15.):
+   g,c=self.gate(e);h=frame(c);h[0].header['EXPTIME']=float(format(e,'.6E'));g.frame(h)
+  for key,value in [('EXPTIME',10.002983),('EXPTIME',10.003973),('GAIN',2.),('XBINNING',2),('BAYERPAT','RGGB'),('DATE-OBS','2020-01-01T00:00:00')]:
+   with self.subTest(key=key,value=value):
+    g,c=self.gate(10.002973);h=frame(c);h[0].header[key]=value
+    with self.assertRaises(C.ControlError):g.frame(h)
+  g,c=self.gate(10.002973);h=frame(c);h[0].header['EXPTIME']=10.002970;g.frame(h)
+  with self.assertRaises(C.ControlError):g.frame(h)
+
 if __name__=='__main__':unittest.main()

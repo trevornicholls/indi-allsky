@@ -1,0 +1,7 @@
+EXPTIME =         1.000297E+01 / Total Exposure Time (s)
+GAIN    =            1.000E+00 / Gain
+XBINNING=                    1 / Binning factor in width
+YBINNING=                    1 / Binning factor in height
+BAYERPAT= 'GRBG    '           / Bayer color pattern
+DATE-OBS= '2026-10-30T17:17:15.103' / UTC start date of observation
+END
