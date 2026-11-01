@@ -1,0 +1,46 @@
+#!/bin/sh
+set -e
+
+# Only the exact historical dh_install directory mistake is migrated. Preserve
+# the complete directory privately; refuse unknown policy rather than deleting it.
+case "$1" in install|upgrade)
+    if [ -L /etc/sudoers.d/indi-allsky ]; then
+        echo "Refusing unexpected sudoers symlink" >&2
+        exit 1
+    fi
+    if [ -d /etc/sudoers.d/indi-allsky ]; then
+    /usr/bin/python3 - <<'PY'
+import os, stat, subprocess, time
+from pathlib import Path
+p = Path('/etc/sudoers.d/indi-allsky')
+if p.is_symlink():
+    raise SystemExit('Refusing unexpected sudoers symlink')
+if p.is_dir():
+    st = p.stat()
+    children = list(p.iterdir())
+    f = p / 'sudoers'
+    expected = [
+        b'# commands necessary for unattended upgrade\nindi-allsky ALL=(root) NOPASSWD: /usr/bin/apt-get update,/usr/bin/apt-get -y install *\n',
+    ]
+    if (st.st_uid != 0 or st.st_gid != 0 or stat.S_IMODE(st.st_mode) != 0o440
+            or children != [f] or f.is_symlink() or not f.is_file()
+            or f.stat().st_uid != 0 or f.stat().st_gid != 0
+            or f.stat().st_mode & 0o022 or f.read_bytes() not in expected):
+        raise SystemExit('Unexpected legacy sudoers content/ownership: preserve and inspect manually')
+    subprocess.run(['/usr/sbin/visudo', '-cf', str(f)], check=True)
+    backup = Path('/var/lib/indi-allsky/legacy-sudoers')
+    if backup.is_symlink():
+        raise SystemExit('Refusing legacy backup symlink')
+    backup.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = backup.stat()
+    if st.st_uid != 0 or st.st_gid != 0 or stat.S_IMODE(st.st_mode) != 0o700:
+        raise SystemExit('Legacy backup must be root:root 0700')
+    destination = backup / ('indi-allsky-' + str(time.time_ns()))
+    os.rename(p, destination)
+    print('Preserved known legacy sudoers directory:', destination)
+PY
+    fi
+    ;;
+esac
+
+#DEBHELPER#

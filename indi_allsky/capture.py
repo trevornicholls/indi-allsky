@@ -676,6 +676,9 @@ class CaptureWorker(Process):
                     if self._shutdown:
                         logger.warning('Shutting down')
 
+                        if self.c_gate:
+                            self.c_gate.drain_shutdown()
+
                         self.indiclient.disableCcdCooler()  # safety
 
                         self.indiclient.disconnectServer()

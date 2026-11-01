@@ -363,20 +363,18 @@ EOF
         # Unpack bundled virtual environment if shipped in package
         VENV="/var/lib/indi-allsky/venv"
         VENV_TAR="/usr/share/indi-allsky/venv.tar.zst"
-        HASH_FILE="${VENV}/.installed_hash"
         if [ -f "$VENV_TAR" ]; then
-            CURRENT_HASH=$(sha256sum "$VENV_TAR" | awk '{print $1}')
-            if [ -f "$HASH_FILE" ] && [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$CURRENT_HASH" ] && "$VENV/bin/python3" -c 'import flask, sqlalchemy' 2>/dev/null; then
-                echo "indi-allsky: Virtual environment is already up-to-date."
-            else
-                echo "indi-allsky: Synchronizing virtual environment..."
-                mkdir -p "$VENV"
-                zstd -dc "$VENV_TAR" | /usr/bin/python3 /usr/share/indi-allsky/misc/diff_unpack.py "$VENV"
-                echo "$CURRENT_HASH" > "$HASH_FILE"
-                chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$VENV"
+            # Replacement must never occur under live capture/web processes.
+            if [ -d /run/systemd/system ]; then
+                systemctl stop indi-allsky.service
+                systemctl stop gunicorn-indi-allsky.socket
+                systemctl stop gunicorn-indi-allsky.service
             fi
+            /usr/bin/python3 /usr/share/indi-allsky/misc/install_venv.py "$VENV_TAR" "$VENV"
+            chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$VENV"
             rm -f "$VENV_TAR"
         fi
+        /usr/sbin/visudo -cf /etc/sudoers.d/indi-allsky
 
         # Validate virtualenv
         VENV_ERR=""

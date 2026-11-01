@@ -558,6 +558,28 @@ class FrameGate:
         self.next = None
         self.ordinary = None
 
+    def drain_shutdown(self, timeout=60.0):
+        """Consume only this session's correlated ACK before graceful replacement.
+
+        Camera must already be idle. No proposal is applied during shutdown;
+        poll retains all identity checks and is the only successful gate release.
+        An unresolved/faulted operation remains latched for the next worker.
+        """
+        deadline = time.monotonic() + timeout
+        if self.pending:
+            LOG.info('QHY C shutdown draining sequence=%d', self.sequence)
+        while self.pending and not self.fault:
+            self.poll(True)
+            if not self.pending or self.fault:
+                break
+            if time.monotonic() >= deadline:
+                self.fail('shutdown processing acknowledgement timeout')
+                break
+            time.sleep(0.05)
+        clean = self.pending is None and not self.fault
+        LOG.info('QHY C shutdown drain complete=%s shared=%s', clean, self.shared[0])
+        return clean
+
     def set_mode(self, mode):
         if self.mode != mode:
             self.mode = mode
