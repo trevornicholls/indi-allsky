@@ -1,0 +1,3 @@
+# November forms use list-based SelectField choices rejected by WTForms 3.3.
+# Complete Config/System routes and dynamic field validation tested with 3.2.2.
+WTForms == 3.2.2

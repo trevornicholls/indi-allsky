@@ -10,7 +10,7 @@ override_dh_auto_build:
 	debian/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip wheel setuptools
 
 	@echo "=== [1/3] Installing production virtualenv packages ==="
-	debian/venv/bin/python3 -m pip install --no-cache-dir \
+	debian/venv/bin/python3 -m pip install --no-cache-dir --constraint debian/venv-constraints.txt \
 		-r requirements/requirements_latest.txt \
 		-r requirements/requirements_optional.txt \
 		-r requirements/requirements_gpio.txt
