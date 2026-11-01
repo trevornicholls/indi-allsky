@@ -10,11 +10,11 @@ CLASSES = (E.exposure_autogain_exp_prio_db, E.exposure_autogain_exp_prio_db_1_10
 def controller(cls=CLASSES[0], floor=6, night=True):
     # Integer microseconds, unlike the historical interactive harness.
     e = Array('q', [10000000, -1, 0, 10000, 100, 15000000, -1])
-    g = Array('d', [0] * 10)
+    g = Array('q', [0] * 10)
     c = cls({'TARGET_ADU': 75, 'TARGET_ADU_DAY': 75}, e, g,
             Array('i', [1, 1, 1, 2, 3, -1]), Array('i', [int(night), 0]))
     for lo, hi in ((3, 4), (5, 6), (7, 8)):
-        g[lo], g[hi] = c.dB2gain(floor), c.dB2gain(30)
+        g[lo], g[hi] = round(c.dB2gain(floor) * 1000), round(c.dB2gain(30) * 1000)
     return c
 
 
@@ -25,6 +25,7 @@ class ExposureControllerTests(unittest.TestCase):
                 for offset in (-0.01, -6, -20):
                     with self.subTest(cls=cls.__name__, floor=floor, offset=offset):
                         c = controller(cls, floor)
+                        floor = c.gain2dB(c.gain_min)
                         gain = c.dB2gain(floor + 6)
                         requested = 10 * 10 ** ((offset - 6) / 20)
                         exp, de, db, dg = c.reduce_gain(10, gain, requested)
@@ -50,7 +51,8 @@ class ExposureControllerTests(unittest.TestCase):
     def test_floor_boundary_and_minimum(self):
         for cls in CLASSES:
             c = controller(cls)
-            for db in (6 - 1e-8, 6, 6 + 1e-8):
+            floor = c.gain2dB(c.gain_min)
+            for db in (floor - 1e-8, floor, floor + 1e-8):
                 with self.subTest(cls=cls.__name__, db=db):
                     requested = 10 * 10 ** ((db - 12) / 20)
                     exp, gain, _, _ = c.adjust_exposure_gain(10, c.dB2gain(12), requested)
@@ -90,6 +92,40 @@ class ExposureControllerTests(unittest.TestCase):
                         exp, gain = c._expUtils.EXPOSURE_NEXT, c._expUtils.GAIN_NEXT
                     self.assertTrue(c.target_adu_found)
                     self.assertTrue(65 <= adu <= 85)
+
+    def test_day_damping_and_binning(self):
+        c = controller(night=False)
+        c.recalculate_exposure(0.0008, c.gain_min, 150, 75, 55, 95, 0.5)
+        self.assertAlmostEqual(c._expUtils.EXPOSURE_NEXT, 0.0006, places=6)
+        self.assertEqual(c._expUtils.BINNING_NEXT, 1)
+        c = controller()
+        c.night_av[1] = 1
+        c.recalculate_exposure(10, c.gain_min, 150, 75, 65, 85, 1)
+        self.assertEqual(c._expUtils.BINNING_NEXT, 3)
+
+    def test_minimum_maximum_saturation_and_unchanged_request(self):
+        for cls in CLASSES:
+            c = controller(cls)
+            for exp, gain in ((c.exposure_min, c.gain_min), (15, c.gain_max)):
+                out_exp, out_gain, de, dg = c.adjust_exposure_gain(exp, gain, exp)
+                self.assertEqual(out_exp, exp)
+                self.assertAlmostEqual(out_gain, gain)
+                self.assertEqual((de, dg), (0, 0))
+            c.recalculate_exposure(15, c.gain_max, 0.1, 75, 65, 85, 1)
+            self.assertEqual(c._expUtils.EXPOSURE_NEXT, 15)
+            c.recalculate_exposure(c.exposure_min, c.gain_min, 255, 75, 65, 85, 1)
+            self.assertEqual(c._expUtils.EXPOSURE_NEXT, c.exposure_min)
+
+    def test_basic_and_legacy_existing_strategy_bounds(self):
+        for cls in (E.exposure_basic, E.exposure_legacy_autogain):
+            c = cls({'TARGET_ADU': 75, 'TARGET_ADU_DAY': 75},
+                    Array('q', [10000000, -1, 0, 10000, 100, 15000000, -1]),
+                    Array('q', [0, 0, 0, 0, 30000, 0, 30000, 0, 30000, -1]),
+                    Array('i', [1, 1, 1, 2, 3, -1]), Array('i', [1, 0]))
+            for adu in (0.1, 50, 100, 255):
+                c.recalculate_exposure(10, 0, adu, 75, 65, 85, 1)
+                self.assertLessEqual(c._expUtils.EXPOSURE_NEXT, 15)
+                self.assertGreaterEqual(c._expUtils.EXPOSURE_NEXT, 0.01)
 
     def test_target_boundaries_history_and_zero(self):
         for adu in (65, 75, 85):
