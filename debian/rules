@@ -30,7 +30,8 @@ override_dh_auto_build:
 	#done
 
 	@echo "=== [2/3] Pruning build tools and caches from virtualenv ==="
-	debian/venv/bin/python3 -m pip uninstall -y setuptools wheel cython Cython setuptools-rust 2>/dev/null || true
+	# Keep setuptools: bundled colorzero declares it as a runtime dependency.
+	debian/venv/bin/python3 -m pip uninstall -y wheel cython Cython setuptools-rust 2>/dev/null || true
 	find debian/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find debian/venv -type f -name "*.pyc" -delete 2>/dev/null || true
 	find debian/venv -type f -name "*.a" -delete 2>/dev/null || true
