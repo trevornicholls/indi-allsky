@@ -353,12 +353,26 @@ class FrameGate:
             c = self.pending
             check(c is not None and self.exposure_submitted and (self.blob_time is None) and (not self.fault), 'unsolicited/duplicate QHY BLOB')
             h = hdulist[0].header
-            check(abs(float(h['EXPTIME']) - c['exposure']) <= 2.1e-06 and float(h['GAIN']) == c['gain'] and (h.get('XBINNING') == 1) and (h.get('YBINNING') == 1) and (h.get('BAYERPAT') == 'GRBG'), 'QHY FITS/settings mismatch')
+            # INDI emits EXPTIME through fits_update_key_dbl(..., 6): six
+            # decimals in scientific notation, not six absolute decimal places.
+            # Retain the existing 2.1us floor; at 10..15s half a printed unit
+            # is 5us. This compares labels, not physical integration accuracy.
+            reported_exposure = float(h['EXPTIME'])
+            printed_unit = 10. ** (math.floor(math.log10(c['exposure'])) - 6)
+            tolerance = max(2.1e-6, printed_unit * .5 + 1e-12)
+            check(math.isfinite(reported_exposure) and abs(reported_exposure - c['exposure']) <= tolerance,
+                  f"QHY FITS exposure mismatch: requested={c['exposure']!r} reported={reported_exposure!r} tolerance={tolerance!r}")
+            check(float(h['GAIN']) == c['gain'] and h.get('XBINNING') == 1
+                  and h.get('YBINNING') == 1 and h.get('BAYERPAT') == 'GRBG',
+                  f"QHY FITS gain/binning/CFA mismatch: expected gain={c['gain']} bin=1 CFA=GRBG; "
+                  f"reported gain={h.get('GAIN')} bin={h.get('XBINNING')}/{h.get('YBINNING')} CFA={h.get('BAYERPAT')}")
             date = datetime.fromisoformat(h['DATE-OBS'].replace('Z', '+00:00'))
             date = date if date.tzinfo else date.replace(tzinfo=timezone.utc)
             stamp = date.timestamp()
             check(self.sent_wall - 1 <= stamp <= time.time() + 1 and (self.last_date is None or stamp > self.last_date), 'stale/repeated QHY timestamp')
             raw = native_statistics(hdulist[0].data, self.config)
+            raw.update(fits_exposure=reported_exposure, fits_gain=float(h['GAIN']),
+                       fits_date_obs=h['DATE-OBS'], exposure_tolerance=tolerance)
             check(raw['pixel_sha'] != self.last_pixel or raw['raw_std'] == 0 or raw['clipped'], 'replayed nonuniform native image')
             self.uniform_count = self.uniform_count + 1 if raw['uniform'] else 0
             check(self.uniform_count < 2, 'repeated midscale-uniform native image')
