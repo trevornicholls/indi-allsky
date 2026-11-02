@@ -25,6 +25,14 @@ def check(ok, reason):
 def enabled(config):
     return config.get('CCD_CONFIG', {}).get('EXPOSURE_CLASSNAME') == STRATEGY
 
+def bypass_gain_one_dark(config, image):
+    # Capture already verifies driver/model/CFA/grid and FITS gain. Use the
+    # completed frame, never shared gain or an editable database camera label.
+    if not enabled(config) or config.get('CAMERA_INTERFACE') != 'indi' or image.gain != 1.0:
+        return False
+    name = (getattr(image, 'detected_camera_name', '') or '').upper().replace('QHY5L-II', 'QHY5LII')
+    return 'QHY5LII-C' in name.split()
+
 def integer(value):
     check(not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and (int(value) == value), 'fractional/nonfinite gain or binning')
     return int(value)

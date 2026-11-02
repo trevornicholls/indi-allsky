@@ -22,6 +22,7 @@ import ephem
 
 from . import constants
 from . import asi676mc
+from .exposure import qhy5lii_c as qhy_c
 
 from . import stretch as stretch_classes
 from .overlay.orb import IndiAllskyOrbGenerator
@@ -1275,6 +1276,12 @@ class ImageProcessor(object):
 
         if i_ref.calibrated:
             # already calibrated
+            return
+
+        if qhy_c.bypass_gain_one_dark(self.config, i_ref):
+            if self.config.get('IMAGE_CALIBRATE_BPM'):
+                raise qhy_c.ControlError('QHY gain-1 dark bypass does not support enabled BPM')
+            logger.info('QHY5L-II-C gain 1: intentionally bypassing dark calibration and dark-derived hole repair')
             return
 
 
