@@ -19,6 +19,9 @@ for mode, cap in [('DAY',1),('NIGHT',14),('MOONMODE',14)]:CONFIG['CCD_CONFIG'][m
 RAW={'valid':True,'clipped':False}
 def command(e=15,g=1,epoch=1,mode='night',kind='normal'):
  return dict(session='test',sequence=1,epoch=epoch,mode=mode,kind=kind,exposure=e,gain=g,binning=1,bounds=C.limits(CONFIG,mode))
+def clipping_command(*args,**kwargs):
+ # Recorded daylight numbers now exercise Night clipping with identical bounds.
+ c=command(*args,**kwargs);c['bounds'].update(target=100.,deviation=25.);return c
 def frame(c):
  data=np.random.default_rng(42).integers(10,180,(960,1280),dtype=np.uint8)
  h=fits.PrimaryHDU(data)
@@ -88,8 +91,8 @@ class Checks(unittest.TestCase):
   x.prepare(job,[1,1]);x.compare_exposure(75,15,1);self.assertTrue(x.target_adu_found);self.assertEqual(x.reply['command'],c)
   x.prepare(job,[1,2]);x.compare_exposure(0,15,1);self.assertFalse(x.target_adu_found);self.assertEqual(x.reply['proposal'],(15,1,1))
 class ClippingRegression(unittest.TestCase):
- def sample(self,p,e,adu,clip,epoch=1,mode='day',gain=1,kind='normal'):
-  return p.decide(command(e,gain,epoch,mode,kind),adu,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
+ def sample(self,p,e,adu,clip,epoch=1,mode='night',gain=1,kind='normal'):
+  return p.decide(clipping_command(e,gain,epoch,mode,kind),adu,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
  def test_recorded_live_conflict(self):
   p=C.Policy()
   for e,a,clip in [(0.5,244.718,.986606),(.25,202.372,.445638),(.125,114.608,.066192)]:
@@ -127,11 +130,12 @@ class ClippingRegression(unittest.TestCase):
 
 class ClippingRecoveryRegression(unittest.TestCase):
  """Small closed-loop policy checks; response functions are explicit fakes."""
- def run_frames(self,p,e,response,count,mode='day',gain=1):
+ def run_frames(self,p,e,response,count,mode='night',gain=1,recorded_day_target=True):
   out=[]
   for _ in range(count):
    a,clip=response(e)
-   result=p.decide(command(e,gain,mode=mode),a,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
+   c=(clipping_command if recorded_day_target else command)(e,gain,mode=mode)
+   result=p.decide(c,a,dict(RAW,clipped=clip>=.01,clip_fraction=clip))
    out.append((e,a,clip,result[0],p.status));e=result[0]
    self.assertLessEqual(e,15);self.assertGreaterEqual(e,.000001)
    self.assertEqual(result[1:],(gain,1))
@@ -147,12 +151,12 @@ class ClippingRecoveryRegression(unittest.TestCase):
   # Local response model uses observed 4.6875s/26.707 and pre-flash
   # 9.375s/52.553 values. It is not a counterfactual camera measurement.
   response=lambda e:(26.707+(e-4.6875)*(52.553-26.707)/4.6875,0.00004)
-  e,out=self.run_frames(p,e,response,24,mode='night',gain=14)
+  e,out=self.run_frames(p,e,response,24,mode='night',gain=14,recorded_day_target=False)
   self.assertGreater(e,9.375)
   self.assertTrue(p.stable)
   self.assertTrue(all(x[3]>=x[0] for x in out))
  def test_static_boundary_closes_without_repeated_halving(self):
-  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  p=C.Policy();e=p.decide(clipping_command(.125),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
   response=lambda e:(800*e,0.02 if e>.075 else 0.001)
   e,out=self.run_frames(p,e,response,100)
   self.assertLessEqual(e,.075);self.assertGreater(e,.07)
@@ -161,17 +165,17 @@ class ClippingRecoveryRegression(unittest.TestCase):
   self.assertIn('clipping-limited',p.status)
   self.assertFalse(p.stable)
  def test_small_clipping_spike_uses_previous_safe_setting(self):
-  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  p=C.Policy();e=p.decide(clipping_command(.125),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
   response=lambda e:(800*e,.02 if e>.075 else .001)
   e,_=self.run_frames(p,e,response,50)
   old=e
-  proposal=p.decide(command(e,mode='day'),800*e,dict(RAW,clipped=True,clip_fraction=.0102))
+  proposal=p.decide(clipping_command(e),800*e,dict(RAW,clipped=True,clip_fraction=.0102))
   self.assertGreater(proposal[0],old*.8)
   e,out=self.run_frames(p,proposal[0],response,60)
   self.assertGreater(e,.07);self.assertLessEqual(e,.075)
   self.assertEqual(len(set(x[0] for x in out[-20:])),1)
  def test_changing_sky_requalifies_boundary(self):
-  p=C.Policy();e=p.decide(command(.125,mode='day'),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
+  p=C.Policy();e=p.decide(clipping_command(.125),114.608,dict(RAW,clipped=True,clip_fraction=.066192))[0]
   e,_=self.run_frames(p,e,lambda e:(800*e,.02 if e>.075 else .006),40)
   old=e
   e,out=self.run_frames(p,e,lambda e:(500*e,.02 if e>.12 else .001),60)

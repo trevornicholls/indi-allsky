@@ -138,8 +138,12 @@ class Policy:
         self.resolution_telemetry = {}
 
     def decide(self, command, adu, native):
-        # The ordinary policy, including f445f2c recovery, still runs. This
-        # narrow final arbiter translates short requests into distinct rows.
+        if command['mode'] == 'day' and command['kind'] == 'normal':
+            # Highlights are telemetry, not a Day veto. Use one private view
+            # for both ordinary policy and every row/adjacent-row decision.
+            native = dict(native, clipped=False, clip_fraction=0.)
+        # Night/Moon retain f445f2c recovery. The narrow final arbiter
+        # translates short requests into distinct rows in every mode.
         if command['kind'] == 'sqm':
             proposal = self._decide(command, adu, native)
             self.resolution_samples = []
@@ -166,6 +170,8 @@ class Policy:
         quantum = exposure_quantum(readout)
         self.resolution_telemetry = {'model': 'SDK-row-profile' if quantum else 'unmapped',
                                      'row_seconds_estimate': quantum, 'rows': None, 'limited': False}
+        if command['mode'] == 'day' and command['kind'] == 'normal':
+            self.resolution_telemetry['clipping_policy'] = 'day-adu-primary'
         if (quantum is None or proposal is None or command['kind'] != 'normal'
                 or self.invalid or self.status in ('settling gain/SQM', 'qualifying post-gain feedback')):
             self.resolution_samples = []
@@ -421,6 +427,8 @@ class Policy:
 
     def _clip_recover(self, command, current, adu, native, direction):
         """Qualified bounded search; no ADU-decline prerequisite for recovery."""
+        if command['mode'] == 'day' and command['kind'] == 'normal':
+            return None  # No Day clipping boundary or "safe" history to retain.
         e, g, _ = current
         b = command['bounds']
         self.clip_clear = min(2, self.clip_clear + 1)
