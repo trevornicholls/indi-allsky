@@ -476,21 +476,94 @@ class SourceTests(unittest.TestCase):
 
 
 class CredentialTests(unittest.TestCase):
-    def test_loadcredential_and_no_env_token(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / 'upload-token'
-            p.write_text(TOKEN + '\n')
-            p.chmod(0o600)
-            with patch.dict(os.environ, {'CREDENTIALS_DIRECTORY': d}):
-                self.assertEqual(P.load_token(), TOKEN)
-                p.chmod(0o644)
-                with self.assertRaises(P.PublisherError) as cm:
+    @contextlib.contextmanager
+    def credential_store(self, file_mode=0o440, directory_mode=0o550,
+                         read_only=True, owner=0):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / 'fixture.service'
+            directory.mkdir()
+            token = directory / 'upload-token'
+            token.write_text(TOKEN + '\n')
+            token.chmod(file_mode)
+            directory.chmod(directory_mode)
+            real_fstat = os.fstat
+            def metadata(fd):
+                t = real_fstat(fd)
+                return SimpleNamespace(st_uid=owner, st_gid=0, st_mode=t.st_mode,
+                                       st_nlink=t.st_nlink, st_size=t.st_size)
+            with patch.object(P, '_CREDENTIAL_ROOT', root), patch.object(P.os, 'fstat', side_effect=metadata), patch.object(P.os, 'fstatvfs', return_value=SimpleNamespace(f_flag=os.ST_RDONLY if read_only else 0)), patch.dict(os.environ, {'CREDENTIALS_DIRECTORY': str(directory)}):
+                try:
+                    yield root, directory, token
+                finally:
+                    directory.chmod(0o700)
+
+    def test_loadcredential_0400_and_acl_0440(self):
+        for file_mode in (0o400, 0o440):
+            for directory_mode in (0o500, 0o550):
+                with self.subTest(file_mode=file_mode, directory_mode=directory_mode):
+                    with self.credential_store(file_mode, directory_mode):
+                        self.assertEqual(P.load_token(), TOKEN)
+
+    def test_unsafe_delivered_file_modes_rejected(self):
+        for mode in (0o444, 0o404, 0o640, 0o600, 0o460, 0o441):
+            with self.subTest(mode=mode), self.credential_store(mode):
+                with self.assertRaises(P.PublisherError) as caught:
                     P.load_token()
-                self.assertNotIn(TOKEN, str(cm.exception))
-                p.chmod(0o600)
-                p.write_text(TOKEN + '\r\nInjected: yes')
+                self.assertNotIn(TOKEN, str(caught.exception))
+
+    def test_unsafe_credential_directories_rejected(self):
+        for mode in (0o555, 0o505, 0o570, 0o700, 0o777):
+            with self.subTest(mode=mode), self.credential_store(directory_mode=mode):
                 with self.assertRaises(P.PublisherError):
                     P.load_token()
+
+    def test_writable_mount_or_untrusted_owner_rejected(self):
+        with self.credential_store(read_only=False):
+            with self.assertRaises(P.PublisherError):
+                P.load_token()
+        with self.credential_store(owner=987654):
+            with self.assertRaises(P.PublisherError):
+                P.load_token()
+
+    def test_unsafe_root_directory_rejected(self):
+        with self.credential_store() as (root, directory, token):
+            root.chmod(0o770)
+            with self.assertRaises(P.PublisherError):
+                P.load_token()
+            root.chmod(0o700)
+
+    def test_arbitrary_directory_and_symlinks_rejected(self):
+        with self.credential_store() as (root, directory, token):
+            for path in (root, root / '..' / directory.name):
+                with patch.dict(os.environ, {'CREDENTIALS_DIRECTORY': str(path)}):
+                    with self.assertRaises(P.PublisherError):
+                        P.load_token()
+            link = root / 'linked.service'
+            link.symlink_to(directory, target_is_directory=True)
+            with patch.dict(os.environ, {'CREDENTIALS_DIRECTORY': str(link)}):
+                with self.assertRaises(P.PublisherError):
+                    P.load_token()
+            directory.chmod(0o700)
+            token.rename(directory / 'real-token')
+            token.symlink_to('real-token')
+            directory.chmod(0o550)
+            with self.assertRaises(P.PublisherError):
+                P.load_token()
+
+    def test_token_format_and_crlf_handling_unchanged(self):
+        for text, accepted in ((TOKEN + '\r\n', True), (TOKEN + '\n\n', False),
+                               (TOKEN + '\r\nInjected: yes', False)):
+            with self.subTest(accepted=accepted), self.credential_store() as (root, directory, token):
+                token.chmod(0o600)
+                token.write_bytes(text.encode())
+                token.chmod(0o440)
+                if accepted:
+                    self.assertEqual(P.load_token(), TOKEN)
+                else:
+                    with self.assertRaises(P.PublisherError):
+                        P.load_token()
 
     def test_cli_failure_does_not_print_secret(self):
         with patch.object(P.Config, 'load', side_effect=Exception(TOKEN)):

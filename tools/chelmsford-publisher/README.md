@@ -85,7 +85,10 @@ Token is never accepted in argv, config or environment: only the credential
 **directory path** is read from `CREDENTIALS_DIRECTORY`. Tokens must be an agreed
 ASCII bearer encoding (hex/base64/base64url accepted, 32..128 characters, optional
 final newline); the server supplies its dedicated 256-bit secret. There is no
-secret generator in this tool. Token source/file must not be world/group readable.
+secret generator in this tool. The original token source must remain root:root 0600. Systemd-delivered
+0400/0440 copies are accepted only inside its root-managed, private, read-only
+`/run/credentials/<unit>.service` store; 0440 may represent its named-user ACL
+mask, not general group sharing. Arbitrary credential directories are rejected.
 Logs contain only fixed categories. No request/response body or arbitrary exception
 is printed; state/snapshot data has no credentials. Root/privileged administrators
 necessarily retain access. No actual token is included in this repository.

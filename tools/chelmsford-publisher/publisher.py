@@ -29,6 +29,7 @@ MAX_PIXELS = 4000000
 MAX_RESPONSE = 4096
 HOST = 'chelmsfordskies.co.uk'
 UPLOAD_PATH = '/api/camera/latest'
+_CREDENTIAL_ROOT = Path('/run/credentials')
 LOG = logging.getLogger('chelmsford-publisher')
 
 
@@ -335,15 +336,48 @@ class HTTPTransport:
 
 
 def load_token():
-    """No token CLI/env value: systemd supplies only the credential directory."""
+    """Read only a private, read-only systemd system-service credential store.
+
+    systemd v257 uses a named-user ACL: its ACL mask appears as group read
+    (0440), even though the credential remains root-owned. Trust the protected
+    runtime boundary, not a blanket ban on every group permission bit.
+    """
     try:
-        directory = os.environ['CREDENTIALS_DIRECTORY']
-        path = Path(directory) / 'upload-token'
-        if (not path.is_file() or path.stat().st_mode & 0o077
-                or path.stat().st_size > 256):
+        directory = Path(os.environ['CREDENTIALS_DIRECTORY'])
+        root = _CREDENTIAL_ROOT
+        if (not directory.is_absolute() or directory.parent != root
+                or not directory.name.endswith('.service')
+                or root.resolve(strict=True) != root):
             raise ValueError
-        text = path.read_text().removesuffix('\n')
-        # 256-bit tokens may use hex or base64url; no header controls/whitespace.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        rootfd = os.open(root, flags)
+        try:
+            r = os.fstat(rootfd)
+            if r.st_uid != 0 or r.st_mode & 0o022:
+                raise ValueError
+            dirfd = os.open(directory.name, flags, dir_fd=rootfd)
+            try:
+                d = os.fstat(dirfd)
+                if (d.st_uid not in (0, os.geteuid())
+                        or d.st_gid not in (0, os.getegid())
+                        or stat.S_IMODE(d.st_mode) not in (0o500, 0o550)
+                        or not os.fstatvfs(dirfd).f_flag & os.ST_RDONLY):
+                    raise ValueError
+                fd = os.open('upload-token', os.O_RDONLY | os.O_NOFOLLOW |
+                             os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
+                with os.fdopen(fd, 'r', encoding='utf-8', newline=None) as f:
+                    t = os.fstat(f.fileno())
+                    if (not stat.S_ISREG(t.st_mode) or t.st_nlink != 1
+                            or t.st_uid not in (0, os.geteuid())
+                            or t.st_gid not in (0, os.getegid())
+                            or stat.S_IMODE(t.st_mode) not in (0o400, 0o440)
+                            or not 0 < t.st_size <= 256):
+                        raise ValueError
+                    text = f.read(257).removesuffix('\n')
+            finally:
+                os.close(dirfd)
+        finally:
+            os.close(rootfd)
         if not re.fullmatch(r'[A-Za-z0-9_\-+/=]{32,128}', text):
             raise ValueError
         return text
