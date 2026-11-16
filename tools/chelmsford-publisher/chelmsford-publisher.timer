@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic independent Chelmsford Skies JPEG publication
+
+[Timer]
+OnBootSec=6min
+OnUnitInactiveSec=6min
+AccuracySec=1s
+Unit=chelmsford-publisher.service
+# Relative scheduling deliberately has no persistent/catch-up calendar queue.
+
+[Install]
+WantedBy=timers.target

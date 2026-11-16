@@ -1,0 +1,32 @@
+[Unit]
+Description=Publish a completed INDI-AllSky JPEG to Chelmsford Skies
+Documentation=file:/usr/local/lib/chelmsford-publisher/README.md
+
+[Service]
+Type=oneshot
+User=chelmsford-publisher
+Group=chelmsford-publisher
+ExecStart=/usr/bin/python3 -B /usr/local/lib/chelmsford-publisher/publisher.py --config /etc/chelmsford-publisher/publisher.json run
+LoadCredential=upload-token:/etc/chelmsford-publisher/upload-token
+StateDirectory=chelmsford-publisher
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=60s
+TimeoutStopSec=5s
+KillMode=control-group
+Restart=no
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+CapabilityBoundingSet=
+# Source DB/WAL/images must be readable without write access. No app service
+# dependency, restart coupling, network-online wait or INDI/USB access.
+ReadOnlyPaths=/var/lib/indi-allsky /var/www/html/allsky/images

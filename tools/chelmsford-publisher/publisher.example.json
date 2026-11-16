@@ -1,0 +1,7 @@
+{
+  "database": "/var/lib/indi-allsky/indi-allsky.sqlite",
+  "image_root": "/var/www/html/allsky/images",
+  "camera_id": 1,
+  "state_dir": "/var/lib/chelmsford-publisher",
+  "source_max_age": 600
+}
