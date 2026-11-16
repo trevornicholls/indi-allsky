@@ -82,9 +82,12 @@ uses 20 seconds. Direct manual `run` has the socket bound but not the systemd ha
 whole-job deadline: use the service for real network runs. No restart loop.
 
 Token is never accepted in argv, config or environment: only the credential
-**directory path** is read from `CREDENTIALS_DIRECTORY`. Tokens must be an agreed
-ASCII bearer encoding (hex/base64/base64url accepted, 32..128 characters, optional
-final newline); the server supplies its dedicated 256-bit secret. There is no
+**directory path** is read from `CREDENTIALS_DIRECTORY`. Tokens must contain exactly
+64 lowercase hexadecimal characters (the agreed 256-bit token format). Only
+terminal CR/LF characters are removed in memory, including repeated line endings;
+spaces, tabs, leading whitespace and embedded line breaks are never stripped.
+The source file is never rewritten; its existing 256-byte size cap still applies.
+The server supplies its dedicated 256-bit secret. There is no
 secret generator in this tool. The original token source must remain root:root 0600. Systemd-delivered
 0400/0440 copies are accepted only inside its root-managed, private, read-only
 `/run/credentials/<unit>.service` store; 0440 may represent its named-user ACL

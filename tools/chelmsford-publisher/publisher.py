@@ -365,7 +365,7 @@ def load_token():
                     raise ValueError
                 fd = os.open('upload-token', os.O_RDONLY | os.O_NOFOLLOW |
                              os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
-                with os.fdopen(fd, 'r', encoding='utf-8', newline=None) as f:
+                with os.fdopen(fd, 'r', encoding='utf-8', newline='') as f:
                     t = os.fstat(f.fileno())
                     if (not stat.S_ISREG(t.st_mode) or t.st_nlink != 1
                             or t.st_uid not in (0, os.geteuid())
@@ -373,12 +373,12 @@ def load_token():
                             or stat.S_IMODE(t.st_mode) not in (0o400, 0o440)
                             or not 0 < t.st_size <= 256):
                         raise ValueError
-                    text = f.read(257).removesuffix('\n')
+                    text = f.read(257).rstrip('\r\n')
             finally:
                 os.close(dirfd)
         finally:
             os.close(rootfd)
-        if not re.fullmatch(r'[A-Za-z0-9_\-+/=]{32,128}', text):
+        if not re.fullmatch(r'[0-9a-f]{64}', text):
             raise ValueError
         return text
     except Exception:

@@ -552,18 +552,37 @@ class CredentialTests(unittest.TestCase):
             with self.assertRaises(P.PublisherError):
                 P.load_token()
 
-    def test_token_format_and_crlf_handling_unchanged(self):
-        for text, accepted in ((TOKEN + '\r\n', True), (TOKEN + '\n\n', False),
-                               (TOKEN + '\r\nInjected: yes', False)):
-            with self.subTest(accepted=accepted), self.credential_store() as (root, directory, token):
-                token.chmod(0o600)
-                token.write_bytes(text.encode())
-                token.chmod(0o440)
-                if accepted:
-                    self.assertEqual(P.load_token(), TOKEN)
-                else:
-                    with self.assertRaises(P.PublisherError):
-                        P.load_token()
+    def check_credential_text(self, text, accepted):
+        with self.credential_store() as (root, directory, token):
+            token.chmod(0o600)
+            token.write_bytes(text.encode())
+            token.chmod(0o440)
+            before = token.read_bytes()
+            if accepted:
+                self.assertEqual(P.load_token(), TOKEN)
+            else:
+                with self.assertRaises(P.PublisherError) as caught:
+                    P.load_token()
+                self.assertNotIn(TOKEN, str(caught.exception))
+            self.assertEqual(token.read_bytes(), before)  # input is never rewritten
+
+    def test_terminal_cr_lf_normalisation(self):
+        for ending in ('', '\n', '\r', '\r\n', '\n\n', '\r\n' * 3, '\r\r\n\n'):
+            with self.subTest(ending_codepoints=[ord(c) for c in ending]):
+                self.check_credential_text(TOKEN + ending, True)
+
+    def test_invalid_token_length_characters_and_whitespace(self):
+        for text in (TOKEN+' ', TOKEN+'\t', ' '+TOKEN, '\t'+TOKEN, '\n'+TOKEN,
+                     TOKEN[:32]+'\n'+TOKEN[32:], TOKEN[:32]+'\r'+TOKEN[32:],
+                     TOKEN+' \r\n', TOKEN+'\t\n', TOKEN+'\n ', TOKEN[:-1], TOKEN+'a',
+                     'g'*64, 'A'*64, TOKEN[:-1]+'%', TOKEN[:-1]+'\x00', TOKEN[:-1]+'é',
+                     '', '\r\n'):
+            with self.subTest(case_length=len(text)):
+                self.check_credential_text(text, False)
+
+    def test_lineending_normalisation_keeps_size_bound(self):
+        self.check_credential_text(TOKEN + '\n' * (256-len(TOKEN)), True)
+        self.check_credential_text(TOKEN + '\n' * (257-len(TOKEN)), False)
 
     def test_cli_failure_does_not_print_secret(self):
         with patch.object(P.Config, 'load', side_effect=Exception(TOKEN)):
