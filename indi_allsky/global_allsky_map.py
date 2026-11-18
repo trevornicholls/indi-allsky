@@ -4,12 +4,14 @@ import html
 import http.client
 import ipaddress
 import json
+import logging
 import math
 import platform
 import re
 import secrets
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_EVEN
 from pathlib import Path
 from urllib import error, parse, request
 
@@ -29,6 +31,8 @@ MAX_UPDATES = 5
 TIMEOUT = 15
 MAX_RESPONSE = 8192
 MAX_DIAGNOSTIC_BODY = 2048
+
+logger = logging.getLogger('indi_allsky')
 
 
 class MapError(ValueError):
@@ -53,13 +57,11 @@ class _NoRedirect(request.HTTPRedirectHandler):
 
 
 def validate_urls(website, image):
-    """Image alone is valid; a website requires an image on the same host."""
-    hosts = []
-    for value in (website, image):
+    """URLs may use different hosts; a website still requires an image."""
+    for index, value in enumerate((website, image)):
         if not isinstance(value, str):
             raise MapError('Public URLs must be text')
         if not value:
-            hosts.append(None)
             continue
         if value != value.strip() or any(ord(c) < 33 for c in value):
             raise MapError('Public URLs must not contain spaces or control characters')
@@ -71,7 +73,10 @@ def validate_urls(website, image):
             raise MapError('Invalid public URL') from exc
         if parts.scheme not in ('http', 'https') or not host or parts.username is not None or parts.password is not None or parts.fragment:
             raise MapError('Use public HTTP(S) URLs without credentials or fragments')
-        if host.lower() == 'localhost' or host.lower().endswith('.local'):
+        policy_host = host.lower().rstrip('.')
+        if index == 1 and (policy_host == 'allsky-map.com' or policy_host.endswith('.allsky-map.com')):
+            raise MapError('allsky-map.com must not be used to host images for the Global Allsky Map')
+        if policy_host == 'localhost' or policy_host.endswith('.local'):
             raise MapError('Public URLs must be reachable outside the local network')
         try:
             address = ipaddress.ip_address(host)
@@ -80,11 +85,8 @@ def validate_urls(website, image):
         else:
             if not address.is_global:
                 raise MapError('Public URLs must not contain private/local IP addresses')
-        hosts.append(host.lower().removeprefix('www.'))
     if website and not image:
         raise MapError('Website URL requires an Image URL')
-    if website and hosts[0] != hosts[1]:
-        raise MapError('Website and Image URLs must use the same domain')
 
 
 def coordinate(value, latitude, private=False):
@@ -99,6 +101,59 @@ def coordinate(value, latitude, private=False):
     direction = ('N' if value >= 0 else 'S') if latitude else ('E' if value >= 0 else 'W')
     magnitude = format(abs(value), '.2f').rstrip('0').rstrip('.')
     return magnitude + direction
+
+
+def _format_coordinate(value, latitude):
+    """Plain decimal magnitude; never pad a source or expose float artefact digits."""
+    text = format(abs(value), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    direction = ('N' if value >= 0 else 'S') if latitude else ('E' if value >= 0 else 'W')
+    return text + direction
+
+
+def publication_coordinates(latitude, longitude, private=False, accuracy='legacy'):
+    """Saved location only; global privacy wins over any map-specific choice."""
+    try:
+        latitude, longitude = float(latitude), float(longitude)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise MapError('Invalid map coordinates') from exc
+    if not (math.isfinite(latitude) and math.isfinite(longitude)) or abs(latitude) > 90 or abs(longitude) > 180:
+        raise MapError('Map coordinates are outside their valid range')
+    if private:
+        return coordinate(latitude, True, True), coordinate(longitude, False, True)
+    distances = {'0.5km': 500, '1km': 1000, '2km': 2000, '5km': 5000}
+    if not isinstance(accuracy, str) or accuracy not in ('legacy', 'exact', *distances):
+        raise MapError('Invalid Global Allsky Map location accuracy')
+    if accuracy == 'legacy':
+        return coordinate(latitude, True), coordinate(longitude, False)
+    source = [Decimal(str(latitude)).normalize(), Decimal(str(longitude)).normalize()]
+    if accuracy == 'exact':
+        return _format_coordinate(source[0], True), _format_coordinate(source[1], False)
+
+    # Finite row/ring grids: longitude spacing depends on the quantised row,
+    # never on a finer, unpublished source latitude. R is an approximate sphere.
+    radius, distance = 6371000, distances[accuracy]
+    rows = math.ceil(math.pi * radius / distance)
+    row = min(rows, max(0, math.floor((latitude + 90) * rows / 180 + 0.5)))
+    lat = -90 + row * 180 / rows
+    if row in (0, rows):
+        lon = 0
+    else:
+        columns = max(1, math.ceil(2 * math.pi * radius * math.cos(math.radians(lat)) / distance))
+        index = math.floor(((longitude + 180) % 360) * columns / 360 + 0.5) % columns
+        lon = -180 + index * 360 / columns if columns > 1 else 0
+    # Stored numeric values have no measurement-accuracy metadata. Conservatively
+    # cap each axis at its own shortest-decimal precision (and at six places).
+    result = []
+    for value, original in zip((lat, lon), source):
+        places = min(6, max(0, -original.as_tuple().exponent))
+        result.append(Decimal(str(value)).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN))
+    if abs(result[0]) == 90:
+        result[1] = Decimal(0)
+    elif result[1] == 180:
+        result[1] = Decimal(-180)
+    return _format_coordinate(result[0], True), _format_coordinate(result[1], False)
 
 
 def computer_description():
@@ -149,13 +204,14 @@ def payload(config, camera, identifier, computer=None):
     image = options.get('IMAGE_URL', '')
     validate_urls(website, image)
     private = bool(config.get('PRIVACY_MODE'))
+    latitude, longitude = publication_coordinates(config.get('LOCATION_LATITUDE'),
+        config.get('LOCATION_LONGITUDE'), private, options.get('LOCATION_ACCURACY', 'legacy'))
     equipment = str(options.get('EQUIPMENT', '') or '')
     return {
         'force': False, 'machine_id': identifier,
         'location': str(config.get('LOCATION_NAME', '') or ''),
         'owner': str(config.get('OWNER', '') or ''),
-        'latitude': coordinate(config.get('LOCATION_LATITUDE'), True, private),
-        'longitude': coordinate(config.get('LOCATION_LONGITUDE'), False, private),
+        'latitude': latitude, 'longitude': longitude,
         'website_url': website, 'image_url': image, 'camera': str(name),
         'lens': str(config.get('LENS_NAME', '') or ''),
         'computer': computer if computer is not None else computer_description(),
@@ -372,7 +428,14 @@ class GlobalMapService:
                 public['last_status'] = 'Interrupted request; manual review required, not retried'
         latest_response = self._read(RESPONSE_KEY)
         if latest_response:
-            public['response_evidence'] = json.loads(latest_response)
+            try:
+                evidence = json.loads(latest_response)
+                if not isinstance(evidence, dict):
+                    raise ValueError('not an object')
+            except ValueError:
+                public['response_evidence_error'] = 'Stored response evidence is invalid'
+            else:
+                public['response_evidence'] = evidence
         public['dirty'] = False
         if state.get('registered'):
             try:
@@ -384,7 +447,7 @@ class GlobalMapService:
     def _budget(self, state, force, removing=False):
         now = self.clock()
         attempts = [a for a in state.get('attempts', []) if now - a['time'] < QUOTA_SECONDS]
-        if not force and sum(not a['force'] for a in attempts) >= MAX_UPDATES:
+        if not removing and not force and sum(not a['force'] for a in attempts) >= MAX_UPDATES:
             raise MapError('Five ordinary attempts in the last 24 hours; wait for quota or explicitly force an update')
         if not removing and now - state.get('last_attempt', -QUOTA_SECONDS) < MIN_INTERVAL:
             raise MapError('Wait one minute between map requests')
@@ -420,6 +483,9 @@ class GlobalMapService:
                             raise MapError('Disabled; publication is in progress. Retry removal after it finishes.')
                         task.state = TaskQueueState.EXPIRED
                     else:
+                        intent = task.data['kwargs']
+                        if not automatic and (intent['operation'] != operation or intent.get('payload_hash') != digest):
+                            raise MapError('A different map request is pending; wait for it to finish')
                         return pending
                 elif automatic and state.get('attempted_task') == pending:
                     state['needs_review'] = True
@@ -475,6 +541,7 @@ class GlobalMapService:
         from .flask import db
         now = self.clock()
         identifier = None
+        unexpected = False
         try:
             if operation not in ('register', 'update', 'force', 'remove'):
                 raise MapError('Invalid queued operation')
@@ -496,7 +563,8 @@ class GlobalMapService:
                 if state.get('pending') != task.id or state.get('attempted_task') == task.id:
                     raise _AlreadyAttempted('Stale/already attempted task; no POST repeated')
                 attempts = self._budget(state, operation == 'force', removing)
-                attempts.append({'time': now, 'force': operation == 'force'})
+                if not removing:
+                    attempts.append({'time': now, 'force': operation == 'force'})
                 state.update(attempts=attempts[-16:], last_attempt=now, attempted_task=task.id,
                              last_status='Sending ' + operation)
             self._change(claim)  # Commits before network wait; no write transaction held.
@@ -519,7 +587,10 @@ class GlobalMapService:
                 db.session.commit()
             result = post(data, self.opener, record=record_response)
         except _AlreadyAttempted as exc:
+            from .flask.models import TaskQueueState
             db.session.rollback()
+            if task.state in (TaskQueueState.MANUAL, TaskQueueState.QUEUED, TaskQueueState.RUNNING):
+                task.setFailed('Global map task no longer owns an unattempted request')
             return {'ok': False, 'status': 'NOT_SENT', 'message': str(exc)}
         except (_MetadataChanged, _Disabled) as exc:
             db.session.rollback()
@@ -527,11 +598,17 @@ class GlobalMapService:
         except (MapError, ValueError) as exc:
             db.session.rollback()
             result = {'ok': False, 'status': 'FAILED', 'message': str(exc)}
+        except Exception as exc:
+            db.session.rollback()
+            logger.error('Global Allsky Map execution failed (%s)', type(exc).__name__)
+            unexpected = True
+            result = {'ok': False, 'status': 'FAILED', 'message': 'Unexpected map failure; inspect task status before retrying'}
         message = str(result.get('message') or result['status']).replace(identifier or '<none>', '[installation-id]')[:200]
         result['message'] = message
         def finish(state):
-            if state.get('pending') == task.id:
-                state.pop('pending', None)
+            if state.get('pending') != task.id:
+                return  # A superseded task must not alter its replacement's state.
+            state.pop('pending', None)
             state['last_status'] = result['status'] + ': ' + message
             if 'maximum' in result:
                 state['quota'] = {k: result[k] for k in ('updates', 'maximum') if k in result}
@@ -541,11 +618,13 @@ class GlobalMapService:
                 if operation != 'remove':
                     state.update(last_success=now, payload_hash=payload_hash, auto_not_before=now + 300)
             elif result['status'] in ('STALE', 'DISABLED'):
-                state['needs_review'] = False
+                pass  # No request sent; preserve any earlier unresolved review.
             elif result['status'] == 'ALREADY_UPDATED':
                 state['auto_not_before'] = now + QUOTA_SECONDS
             else:
-                state['needs_review'] = True
+                # Before a durable claim no POST was made; retain any earlier review.
+                state['needs_review'] = (not unexpected or state.get('attempted_task') == task.id
+                                         or bool(state.get('needs_review')))
         self._change(finish)
         if result['ok']:
             task.setSuccess('Global map ' + result['status'])
