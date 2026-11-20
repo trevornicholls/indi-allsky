@@ -5,6 +5,11 @@ Single-Source-of-Truth Version Bumper for indi-allsky.
 Usage:
   python3 misc/bump_version.py indi_v2026.09.12
   python3 misc/bump_version.py --show
+  python3 misc/bump_version.py --package-only 2026.11.01+trixie.qhy.BUILD trixie
+
+Release bumps update the application identity. Debian build preparation must use
+--package-only to generate its changelog without changing the source identity,
+frontend version or asset fallback.
 """
 
 import sys
@@ -63,7 +68,13 @@ def set_version(new_version, suite="stable"):
         else:
             print(f" Warning: No cache-buster pattern matched in {BASE_HTML.relative_to(ROOT_DIR)}")
 
-    # 4. Dynamically generate/update debian/changelog for package builds
+    set_package_version(clean_ver, suite=suite)
+    print(f"\nSuccessfully updated version to {clean_ver} ({suite}) across all files!")
+
+
+def set_package_version(new_version, suite="stable"):
+    """Generate Debian metadata without stamping application/source files."""
+    clean_ver = re.sub(r'^(indi_)?v?', '', str(new_version).strip())
     now_str = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
     changelog_content = DEBIAN_CHANGELOG.read_text() if DEBIAN_CHANGELOG.exists() else ""
     new_entry = f"""indi-allsky ({clean_ver}) {suite}; urgency=medium
@@ -77,8 +88,6 @@ def set_version(new_version, suite="stable"):
         DEBIAN_CHANGELOG.write_text(new_entry + changelog_content)
         print(f" Generated/Updated {DEBIAN_CHANGELOG.relative_to(ROOT_DIR)} dynamically ({suite})")
 
-    print(f"\nSuccessfully updated version to {clean_ver} ({suite}) across all files!")
-
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
@@ -88,6 +97,13 @@ def main():
     if sys.argv[1] == "--show":
         print(f"Current version: {get_current_version()}")
         sys.exit(0)
+
+    if sys.argv[1] == "--package-only":
+        if len(sys.argv) < 3:
+            raise SystemExit("Usage: bump_version.py --package-only VERSION [SUITE]")
+        suite = sys.argv[3] if len(sys.argv) > 3 else "stable"
+        set_package_version(sys.argv[2], suite=suite)
+        return
 
     new_ver = sys.argv[1]
     suite = sys.argv[2] if len(sys.argv) > 2 else "stable"

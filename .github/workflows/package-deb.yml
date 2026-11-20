@@ -119,9 +119,9 @@ jobs:
           echo "INDI_3RDPARTY_VER=$INDI_3RDPARTY_VER" >> $GITHUB_ENV
           echo "Building Version: $VERSION | Suite: $SUITE | Pinned INDI Core: $INDI_CORE_TAG | Pinned INDI 3rdParty: $INDI_3RDPARTY_TAG"
 
-      - name: Generate Dynamic Version & debian/changelog
+      - name: Generate Debian changelog without changing application identity
         run: |
-          python3 misc/bump_version.py "${{ env.VERSION }}" "${{ env.SUITE }}"
+          python3 misc/bump_version.py --package-only "${{ env.VERSION }}" "${{ env.SUITE }}"
 
       - name: Generate Release Notes Summary & Git Changelog
         run: |
