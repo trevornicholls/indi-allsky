@@ -1,0 +1,29 @@
+[Unit]
+Description=Chelmsford exact-frame metadata companion (independent of JPEG capture)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=chelmsford-publisher
+Group=chelmsford-publisher
+ExecStart=/usr/bin/python3 -B /usr/local/lib/chelmsford-publisher/frame_metadata.py --config /etc/chelmsford-publisher/publisher.json
+LoadCredential=upload-token:/etc/chelmsford-publisher/upload-token
+UMask=0077
+TimeoutStartSec=25s
+TimeoutStopSec=5s
+KillMode=control-group
+Restart=no
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadOnlyPaths=/var/lib/chelmsford-publisher
+ReadWritePaths=/var/lib/chelmsford-publisher/metadata

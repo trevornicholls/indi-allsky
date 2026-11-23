@@ -1,0 +1,11 @@
+[Unit]
+Description=Check acknowledged Chelmsford frame metadata every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=1s
+Unit=chelmsford-metadata.service
+
+[Install]
+WantedBy=timers.target

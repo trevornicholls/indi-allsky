@@ -132,12 +132,14 @@ class ImageSource:
     def newest(self, now):
         """Bounded reselection only; never search backwards for an older image."""
         c = self.config
+        self.metadata = None
         for attempt in range(2):
             try:
                 db = sqlite3.connect(c.database.resolve().as_uri() + '?mode=ro',
                                      uri=True, timeout=1)
                 try:
-                    row = db.execute('SELECT id, createDate, filename, fileSize '
+                    db.row_factory = sqlite3.Row
+                    row = db.execute('SELECT * '
                                      'FROM image WHERE camera_id=? '
                                      'ORDER BY createDate DESC, id DESC LIMIT 1',
                                      (c.camera_id,)).fetchone()
@@ -145,7 +147,7 @@ class ImageSource:
                     db.close()  # no database connection while copying or networking
                 if row is None:
                     raise SourceUnavailable('no_image')
-                ident, created, relative, size = row
+                ident, created, relative, size = (row[k] for k in ('id', 'createDate', 'filename', 'fileSize'))
                 if type(ident) is not int or ident < 1:
                     raise SourceUnavailable('invalid_source_identity')
                 stamp = datetime.datetime.fromisoformat(created)
@@ -171,8 +173,13 @@ class ImageSource:
                         or (size is not None and len(data) != size)):
                     raise SourceUnavailable('image_changed')
                 validate_jpeg(data)
-                return {'camera_id': c.camera_id, 'image_id': ident,
-                        'created': created}, data
+                src = {'camera_id': c.camera_id, 'image_id': ident, 'created': created}
+                try:
+                    from frame_metadata import extract
+                    self.metadata = {'source': src.copy(), 'fields': extract(row, data)}
+                except Exception:
+                    LOG.warning('metadata_capture_unavailable')
+                return src, data
             except (OSError, sqlite3.Error, ValueError, TypeError):
                 if attempt:
                     raise SourceUnavailable('source_unavailable') from None
@@ -432,6 +439,14 @@ class Publisher:
                 s['next_sequence'] = str(int(s['next_sequence']) + 1)
                 s['pending'] = pending
                 self.store.save(s)
+                # Metadata is optional and isolated from the strict JPEG state schema.
+                # A missing candidate is skipped, never reconstructed after ACK.
+                try:
+                    from frame_metadata import MetadataStore
+                    MetadataStore(self.store.directory).freeze(
+                        pending, getattr(self.source, 'metadata', None))
+                except Exception:
+                    LOG.warning('metadata_freeze_unavailable')
                 self.hook('allocation_durable')
                 self.store.cleanup(s)
                 data = fresh

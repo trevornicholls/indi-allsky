@@ -135,3 +135,41 @@ permissions/host decoder and secret → confirm production next sequence → off
 initialisation → one controlled real upload → anonymous GET/ETag/bytes check → only
 then enable periodic timer. No Map registration/update is needed merely to replace
 JPEG bytes at a stable public URL. Changing the Map image URL remains separate.
+
+## Exact-frame metadata companion (Sites v10)
+
+`frame_metadata.py` is an independent, bounded companion, not an INDI-AllSky
+worker or a second JPEG uploader. `publisher.py` freezes the explicit metadata
+allowlist from the same selected SQL row and validated JPEG (EXIF Model) into
+`STATE/metadata/candidate.json`, after durable sequence allocation and before
+POST. Source identity, JPEG state schema, POST, ACK, deduplication, cooldown,
+retry/backoff and the six-minute timer are unchanged. Failed capture/freeze
+skips metadata rather than blocking JPEG publication. Legacy ACKs/pending
+frames are never reconstructed. A crash between allocation and freezing can
+therefore safely omit that frame's metadata.
+
+Provision `STATE/metadata` owner chelmsford-publisher, mode0700. The producer alone
+replaces candidate.json; the companion alone replaces delivery.json and owns its
+own lock. Files are0600 and atomically replaced/fsynced. Root JPEG cleanup does
+not scan this subdirectory. Only a candidate matching the durable JPEG last_ack
+(sequence, digest AND unchanged source identity) is eligible. No post-ACK DB
+lookup. Only the newest candidate exists; metadata retries never cause JPEG
+resends. Receipt timestamps use host `/etc/localtime`; DST-fold/gap uncertainty
+becomes null. jSQM is relative and uncalibrated. Optional driver DATE-OBS is
+UTC, not hardware-certified shutter timing. No full raw DB JSON is published.
+
+Install the additional service/timer separately. It reuses LoadCredential and
+reads JPEG state through a read-only mount; only the metadata directory is
+writable. One PUT/run,10s socket timeout,25s service budget, one-minute timer,
+metadata-only60/120/240/480/960/1800s backoff. Honor429 Retry-After. A matching200
+ACK persists success; stale_sequence drops; jpeg_not_committed defers; transport
+or503 ambiguity retries the same frozen JSON. Conflicts/auth/validation/TLS/bad
+ACK stop that candidate for review, without touching JPEG state. A new candidate
+has an independent delivery identity/budget; review outcomes remain in the
+journal, not a backlog. Never log arbitrary responses or exceptions.
+
+Tests use local fixtures/loopback only. Run from this directory:
+`/usr/bin/python3 -B -m unittest discover -p 'test*.py'`.
+For independent old/new JPEG-policy comparison, export the parent publisher
+outside the checkout and set `BASELINE_PUBLISHER_PATH` to that nonsecret file.
+No production credential or endpoint is used by the suite.
