@@ -1,13 +1,13 @@
 
 indi-allsky can list your camera on the [Allsky Map](https://www.thomasjacquin.com/allsky-map/), the public map run by the Allsky project.
 
-This is a separate, optional integration. It is not the **Allsky Map** integration (allsky-map.com) on the neighboring settings tab, and enabling one does not enable the other.
+This is a separate, optional integration, found on the **AllskyTeam Map** settings tab. It is not indi-allsky's **Allsky Map** tab, which connects to a different service (allsky-map.com); enabling one does not enable the other.
 
 > **Your listing is public.** Treat everything you publish as visible to anyone, including your coordinates, owner and location name, website and image. Even with reduced coordinates, a picture or description can reveal where a camera is. Publication is off by default, and enabling it does not register you automatically. Your first listing is normally created when you press Register / Update.
 
 ## Quick start
 
-1. Open **Config → Allsky Map (Allsky project)**.
+1. Open **Config → AllskyTeam Map**.
 2. Turn on **Enable publication**.
 3. Choose **Location accuracy** (see [Location accuracy and Privacy Mode](#location-accuracy-and-privacy-mode)).
 4. Optionally add an **Image URL** (a public image anyone can open without logging in), a **Website URL** and **Equipment**.
@@ -30,7 +30,7 @@ Everything below is sent to the map. **Preview** shows exactly what will be sent
 | Camera | Detected camera name |
 | Computer | Board model (or "Generic PC") and RAM |
 | Version | indi-allsky release version, e.g. `indi_v2026.11.01` |
-| Website URL, Image URL, Equipment | The Allsky Map settings |
+| Website URL, Image URL, Equipment | The AllskyTeam Map settings |
 | Installation identifier | A random ID that tells the map which listing is yours (see [Installation identifier and backups](#installation-identifier-and-backups)) |
 
 Location name and Owner are published as `Unknown` when not configured or blank. Your saved settings are not changed.
@@ -121,7 +121,7 @@ A request that was already in progress when you disabled can still finish. It ca
 
 **Technical details** shows the raw status and the map's last reply, with the identifier hidden.
 
-**A request that stays pending.** Don't keep resubmitting. Restarting indi-allsky expires stuck local tasks, but it won't necessarily clear the pending or review status, and it doesn't tell you whether the map received the request. Check the public map before deciding what to do next.
+**A request that stays pending.** Don't keep resubmitting. Map requests share indi-allsky's background queue with timelapse and keogram generation, so a request can wait while one of those is being built. If it stays pending well beyond that, restart the indi-allsky service (a configuration reload is not enough). Restarting expires stuck local tasks, but it won't necessarily clear the pending or review status, and it doesn't tell you whether the map received the request. Check the public map, then use **Preview** and **Register / Update**, or **Remove and disable…**. After a restart the old request no longer blocks these actions, and the new request replaces it.
 
 ### Messages
 
@@ -132,7 +132,7 @@ A request that was already in progress when you disabled can still finish. It ca
 | "Publication suppressed; Preview and explicitly Register to resume" | Publication is paused. Enable, Preview and Register. |
 | "Five ordinary attempts in the last 24 hours; wait for quota or explicitly force an update" | Wait for the 24-hour window, or use Force only after checking why updates were refused |
 | "Wait one minute between map requests" | Try again after a minute. This applies to Force too. |
-| "A different map request is pending; wait for it to finish" | Wait, then press Refresh status |
+| "A different map request is pending; wait for it to finish" | Wait, then press Refresh status. If it persists, see *A request that stays pending* above. |
 | Image or website URL rejected | Check the [URL rules](#url-rules) |
 | "No active local camera metadata is available" | The active camera isn't a local camera, or no camera has connected yet |
 
@@ -150,7 +150,9 @@ A request that was already in progress when you disabled can still finish. It ca
 
 ### URL rules
 
-- Both URLs are optional. An Image URL on its own is fine; a Website URL needs an Image URL.
+- **Website URL** (optional) is a link to your own site, shown on the map.
+- **Image URL** (optional) is the address of your latest image. The image must already be published somewhere anyone can open it, for example by your website or another upload tool. indi-allsky only sends the address; it does not upload, host or check the image.
+- Both can be left blank, and an Image URL on its own is fine. A Website URL on its own is not accepted: it needs an Image URL too.
 - They can be on different domains.
 - They must be public `http` or `https` addresses:
   - no login
@@ -158,6 +160,7 @@ A request that was already in progress when you disabled can still finish. It ca
   - no `#fragment`
   - no private or local addresses (e.g. `192.168.x.x`, `localhost`, `*.local`)
 - allsky-map.com image links cannot be used as the Image URL.
+- indi-allsky checks the address format only. It can't tell whether an address is reachable from the internet or needs a login, so open it in a private browser window first.
 
 ### Installation identifier and backups
 

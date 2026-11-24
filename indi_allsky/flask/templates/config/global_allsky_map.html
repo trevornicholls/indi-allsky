@@ -10,7 +10,7 @@
 <div class="tw:flex tw:items-center tw:justify-between">
 <h2 class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Allsky Map (Allsky project)</h2>
 <div class="tw:flex tw:flex-wrap tw:justify-end tw:gap-3">
-<a href="https://github.com/aaronwmorris/indi-allsky/wiki/Global-Allsky-Map" target="_blank" rel="noopener" class="tw:link tw:link-info tw:text-xs">Documentation</a>
+<a href="https://github.com/aaronwmorris/indi-allsky/wiki/AllskyTeam-Map" target="_blank" rel="noopener" class="tw:link tw:link-info tw:text-xs">Documentation</a>
 <a href="https://www.thomasjacquin.com/allsky-map/" target="_blank" rel="noopener" class="tw:link tw:link-info tw:text-xs">View Allsky Map</a>
 </div>
 </div>
@@ -22,10 +22,10 @@
 </div>
 <div class="tw:flex tw:items-center tw:justify-between tw:gap-4 tw:py-3 tw:border-b tw:border-base-300/60">
 <div>
-<label for="GLOBAL_ALLSKY_MAP__ENABLE" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">{{ form_config.GLOBAL_ALLSKY_MAP__ENABLE.label.text }}</label>
+<label for="ALLSKYTEAM_MAP__ENABLE" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">{{ form_config.ALLSKYTEAM_MAP__ENABLE.label.text }}</label>
 <p class="tw:text-[0.625rem] tw:text-base-content/50">Allows registration and automatic updates. Turning this off stops updates but does not delete an existing listing.</p>
-</div>{{ form_config.GLOBAL_ALLSKY_MAP__ENABLE(class="tw:toggle tw:toggle-primary tw:toggle-sm") }}</div>
-<div id="GLOBAL_ALLSKY_MAP__ENABLE-error" class="tw:text-error" style="display:none">
+</div>{{ form_config.ALLSKYTEAM_MAP__ENABLE(class="tw:toggle tw:toggle-primary tw:toggle-sm") }}</div>
+<div id="ALLSKYTEAM_MAP__ENABLE-error" class="tw:text-error" style="display:none">
 </div>
 </div>
 </section>
@@ -40,7 +40,7 @@
 <span>Privacy Mode is on, so whole-degree coordinates are published and this setting has no effect. Your choice is kept for when Privacy Mode is turned off.</span>
 </div>
 <div class="tw:flex tw:flex-col tw:gap-2">
-<label for="GLOBAL_ALLSKY_MAP__LOCATION_ACCURACY" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Location accuracy</label>{{ form_config.GLOBAL_ALLSKY_MAP__LOCATION_ACCURACY(class='tw:select tw:select-sm tw:h-11 tw:bg-base-100 tw:w-full', disabled=form_config.PRIVACY_MODE.data) }}<div id="GLOBAL_ALLSKY_MAP__LOCATION_ACCURACY-error" class="tw:text-error tw:text-xs" style="display:none">
+<label for="ALLSKYTEAM_MAP__LOCATION_ACCURACY" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Location accuracy</label>{{ form_config.ALLSKYTEAM_MAP__LOCATION_ACCURACY(class='tw:select tw:select-sm tw:h-11 tw:bg-base-100 tw:w-full', disabled=form_config.PRIVACY_MODE.data) }}<div id="ALLSKYTEAM_MAP__LOCATION_ACCURACY-error" class="tw:text-error tw:text-xs" style="display:none">
 </div>
 <p class="tw:text-[0.625rem] tw:text-base-content/50">How precisely your saved location appears on the public map. Uses the location from the Location settings; GPS is not read directly.</p>
 </div>
@@ -54,18 +54,18 @@
 </div>
 <div class="tw:grid tw:grid-cols-1 tw:sm:grid-cols-2 tw:gap-4 tw:pb-4 tw:border-b tw:border-base-300/60">
 <div class="tw:flex tw:flex-col tw:gap-2">
-<label for="GLOBAL_ALLSKY_MAP__WEBSITE_URL" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Website URL</label>{{ form_config.GLOBAL_ALLSKY_MAP__WEBSITE_URL(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='https://example.org/') }}<div id="GLOBAL_ALLSKY_MAP__WEBSITE_URL-error" class="tw:text-error tw:text-xs" style="display:none">
+<label for="ALLSKYTEAM_MAP__WEBSITE_URL" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Website URL</label>{{ form_config.ALLSKYTEAM_MAP__WEBSITE_URL(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='https://example.org/') }}<div id="ALLSKYTEAM_MAP__WEBSITE_URL-error" class="tw:text-error tw:text-xs" style="display:none">
 </div>
 <p class="tw:text-[0.625rem] tw:text-base-content/50">Optional. Link shown on the map. Needs an Image URL.</p>
 </div>
 <div class="tw:flex tw:flex-col tw:gap-2">
-<label for="GLOBAL_ALLSKY_MAP__IMAGE_URL" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Image URL</label>{{ form_config.GLOBAL_ALLSKY_MAP__IMAGE_URL(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='https://example.org/latest.jpg') }}<div id="GLOBAL_ALLSKY_MAP__IMAGE_URL-error" class="tw:text-error tw:text-xs" style="display:none">
+<label for="ALLSKYTEAM_MAP__IMAGE_URL" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Image URL</label>{{ form_config.ALLSKYTEAM_MAP__IMAGE_URL(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='https://example.org/latest.jpg') }}<div id="ALLSKYTEAM_MAP__IMAGE_URL-error" class="tw:text-error tw:text-xs" style="display:none">
 </div>
 <p class="tw:text-[0.625rem] tw:text-base-content/50">Optional. A public image (no login). May be on a different domain from the website. allsky-map.com links are not accepted.</p>
 </div>
 </div>
 <div class="tw:flex tw:flex-col tw:gap-2">
-<label for="GLOBAL_ALLSKY_MAP__EQUIPMENT" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Equipment</label>{{ form_config.GLOBAL_ALLSKY_MAP__EQUIPMENT(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='e.g. enclosure, dew heater, lens') }}<div id="GLOBAL_ALLSKY_MAP__EQUIPMENT-error" class="tw:text-error tw:text-xs" style="display:none">
+<label for="ALLSKYTEAM_MAP__EQUIPMENT" class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Equipment</label>{{ form_config.ALLSKYTEAM_MAP__EQUIPMENT(class='tw:input tw:input-sm tw:h-11 tw:bg-base-100 tw:w-full', placeholder='e.g. enclosure, dew heater, lens') }}<div id="ALLSKYTEAM_MAP__EQUIPMENT-error" class="tw:text-error tw:text-xs" style="display:none">
 </div>
 <p class="tw:text-[0.625rem] tw:text-base-content/50">Optional free text shown on the map.</p>
 </div>
@@ -148,7 +148,7 @@
 <strong>Location precision</strong> — Published coordinates are limited by the precision of your saved location. Rounding can change or eliminate the intended grid spacing. Choosing a coarser setting later does not remove locations that were already public.</p>
 <p>
 <strong>Installation identifier</strong> — A random ID, created at first Preview, identifies this listing to the map. Keep it private. Anyone with it could change or remove your listing. It is not your host machine ID and is not used to log in to indi-allsky. It survives disable, re-enable and upgrades; it is kept in the database backup. No image bytes or full configuration are sent.</p>
-<p>More detail in the <a class="tw:link tw:link-info" href="https://github.com/aaronwmorris/indi-allsky/wiki/Global-Allsky-Map" target="_blank" rel="noopener">Allsky Map wiki page</a>.</p>
+<p>More detail in the <a class="tw:link tw:link-info" href="https://github.com/aaronwmorris/indi-allsky/wiki/AllskyTeam-Map" target="_blank" rel="noopener">AllskyTeam Map wiki page</a>.</p>
 </div>
 </section>
 </div>
@@ -157,7 +157,7 @@
 $(function () {
   function updateLocationPrivacy() {
     const privateMode = $('#PRIVACY_MODE').prop('checked');
-    $('#GLOBAL_ALLSKY_MAP__LOCATION_ACCURACY').prop('disabled', privateMode);
+    $('#ALLSKYTEAM_MAP__LOCATION_ACCURACY').prop('disabled', privateMode);
     $('#global-map-private-location').toggle(privateMode);
   }
   $('#PRIVACY_MODE').on('change', updateLocationPrivacy);
@@ -165,7 +165,7 @@ $(function () {
   let previewToken = null;
   const endpoint = {{ url_for('indi_allsky.global_allsky_map_view') | tojson }};
   const buttons = $('[data-global-map]');
-  let savedEnabled = {{ form_config.GLOBAL_ALLSKY_MAP__ENABLE.data | tojson }};
+  let savedEnabled = {{ form_config.ALLSKYTEAM_MAP__ENABLE.data | tojson }};
   function globalMapLastResult(value) {
     const text = String(value);
     const match = /^([A-Z_]+)(?::|$)/.exec(text);
@@ -261,13 +261,13 @@ $(function () {
         $('#global-map-preview-note').text('Request queued. Refresh status to check the result.');
       }
       if (operation === 'remove') {
-        $('#GLOBAL_ALLSKY_MAP__ENABLE').prop('checked', false);
+        $('#ALLSKYTEAM_MAP__ENABLE').prop('checked', false);
         previewToken = null;
       }
       show(data);
     }).fail(function (xhr) {
       const data = xhr.responseJSON || {error: 'Request failed; refresh status before retrying'};
-      if (operation === 'remove' && data.enabled === false) $('#GLOBAL_ALLSKY_MAP__ENABLE').prop('checked', false);
+      if (operation === 'remove' && data.enabled === false) $('#ALLSKYTEAM_MAP__ENABLE').prop('checked', false);
       show(data);
     }).always(function () {
       buttons.prop('disabled', false);
