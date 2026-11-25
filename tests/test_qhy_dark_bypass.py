@@ -2,6 +2,7 @@
 import ast
 import copy
 import logging
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -32,7 +33,7 @@ def calibration_types():
                 ('__cfa_bgr_map', '__cfa_gray_map') for t in n.targets)]
     isolated = ast.ClassDef(name='ImageProcessor', bases=[], keywords=[], body=body, decorator_list=[])
     image = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ImageData')
-    ns = dict(cv2=cv2, numpy=np, psutil=psutil, time=time, Path=Path, constants=constants,
+    ns = dict(cv2=cv2, numpy=np, math=math, psutil=psutil, time=time, Path=Path, constants=constants,
               logger=logging.getLogger('dark-bypass-test'), qhy_c=C,
               CalibrationNotFound=CalibrationNotFound, sa_true=sa_true)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[isolated, image], type_ignores=[])),

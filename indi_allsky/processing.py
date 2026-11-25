@@ -1656,6 +1656,12 @@ class ImageProcessor(object):
         if i_ref.image_bitpix == 8:
             # nothing to scale
             adu_8 = float(adu) if preserve_precision else int(adu)
+            # cv2.mean's reciprocal multiplication can put a saturated uint8
+            # mean one float step above 255. Normalise only that roundoff;
+            # keep fractional feedback and the controller's strict range gate.
+            if (preserve_precision and self.image.dtype == numpy.uint8
+                    and 255.0 < adu_8 <= math.nextafter(255.0, math.inf)):
+                adu_8 = 255.0
         elif i_ref.image_bitpix == 16:
             shift_factor = self.max_bit_depth - 8
             adu_8 = int(adu) >> shift_factor
